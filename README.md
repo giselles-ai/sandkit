@@ -44,21 +44,18 @@ export async funciton POST() {
 
 ```ts
 // api/sandkit-sample/workspaces/[id]/route.ts
-import { sandkit } from "@/lib/sandkit"
+import { sandkit } from "@/lib/sandkit";
 
-export async function POST(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params
-  const workspace = await sandkit.getWorkspace(id)
-  const sandbox = await workspace.createOrResumeSandbox()
-  const result = await sandbox.runCommand("cat", ["./hello.txt"])
+export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const workspace = await sandkit.getWorkspace(id);
+  const sandbox = await workspace.createOrResumeSandbox();
+  const result = await sandbox.runCommand("cat", ["./hello.txt"]);
   return new Response(JSON.stringify({ output: result.stdout }), {
     status: 200,
     headers: {
       "content-type": "application/json",
     },
-  })
+  });
 }
 ```
