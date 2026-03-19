@@ -7,6 +7,10 @@ import type {
 import type { SandkitContext } from "./context.ts";
 import { writePersistedSandboxState } from "./workspace-state.ts";
 
+export interface WorkspaceSandboxHandle {
+  runCommand(command: string, args: string[]): Promise<CommandResult>;
+}
+
 export class ManagedSandbox {
   readonly #ctx: SandkitContext;
   readonly #driver: SandboxDriver;
@@ -30,10 +34,15 @@ export class ManagedSandbox {
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult> {
-    return this.withManagedExecution("runCommand", async () => {
-      this.ensureCommandShape(command, args);
-      return this.#driver.runCommand(command, args);
-    });
+    this.ensureCommandShape(command, args);
+    try {
+      const result = await this.#driver.runCommand(command, args);
+      await this.persistSessionState();
+      return result;
+    } catch (error) {
+      await this.persistSessionState();
+      throw error;
+    }
   }
 
   async snapshot(): Promise<PersistedSandboxState> {
@@ -50,23 +59,28 @@ export class ManagedSandbox {
     }
   }
 
-  private async persistSnapshot(): Promise<void> {
-    const snapshot = await this.#driver.snapshot();
+  private async persistSessionState(): Promise<void> {
     this.#workspace = await this.#ctx.adapter.workspaces.updateWorkspace(this.#workspace.id, {
-      metadata: writePersistedSandboxState(this.#workspace, snapshot),
-      sandboxId: snapshot.sessionId,
+      lastResumedAt: new Date().toISOString(),
+      metadata: writePersistedSandboxState(this.#workspace, {
+        kind: "sandbox-session",
+        sessionId: this.#driver.id,
+      }),
+      sandboxId: this.#driver.id,
     });
     this.#onWorkspaceUpdate?.(this.#workspace);
   }
+}
 
-  private async withManagedExecution<T>(_action: string, fn: () => Promise<T>): Promise<T> {
-    try {
-      const result = await fn();
-      await this.persistSnapshot();
-      return result;
-    } catch (error) {
-      await this.persistSnapshot();
-      throw error;
-    }
+export class LazySandboxHandle implements WorkspaceSandboxHandle {
+  readonly #resolveSandbox: () => Promise<ManagedSandbox>;
+
+  constructor(resolveSandbox: () => Promise<ManagedSandbox>) {
+    this.#resolveSandbox = resolveSandbox;
+  }
+
+  async runCommand(command: string, args: string[]): Promise<CommandResult> {
+    const sandbox = await this.#resolveSandbox();
+    return sandbox.runCommand(command, args);
   }
 }

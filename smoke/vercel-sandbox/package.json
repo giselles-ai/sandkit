@@ -1,0 +1,17 @@
+{
+  "name": "smoke-vercel-sandbox",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "bun run index.ts"
+  },
+  "dependencies": {
+    "sandkit": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.11"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

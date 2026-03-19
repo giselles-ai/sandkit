@@ -35,3 +35,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # opensrc - source code for packages
 opensrc/
+
+smoke/vercel-sandbox/smoke-workspaces.sqlite

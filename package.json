@@ -1,20 +1,22 @@
 {
   "name": "sandbox-devkit",
   "private": true,
+  "workspaces": [
+    "packages/*",
+    "smoke/*"
+  ],
   "type": "module",
   "module": "index.ts",
   "scripts": {
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
-    "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check"
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
+    "smoke:vercel-sandbox": "bun run --cwd smoke/vercel-sandbox smoke"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "oxfmt": "0.41.0",
     "oxlint": "1.56.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   }
 }

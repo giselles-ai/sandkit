@@ -4,6 +4,7 @@ export * from "./core/workspace.ts";
 export * from "./core/mock-driver.ts";
 export * from "./types.ts";
 export * from "./adapters/index.ts";
+export * from "./drivers/index.ts";
 export * from "./policies/index.ts";
 export * from "./schema/index.ts";
 export * from "./cli/index.ts";
