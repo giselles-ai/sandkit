@@ -37,10 +37,10 @@ export class ManagedSandbox {
     this.ensureCommandShape(command, args);
     try {
       const result = await this.#driver.runCommand(command, args);
-      await this.persistSessionState();
+      await this.persistDurableState();
       return result;
     } catch (error) {
-      await this.persistSessionState();
+      await this.persistDurableState();
       throw error;
     }
   }
@@ -59,14 +59,11 @@ export class ManagedSandbox {
     }
   }
 
-  private async persistSessionState(): Promise<void> {
+  private async persistDurableState(): Promise<void> {
+    const snapshot = await this.#driver.snapshot();
     this.#workspace = await this.#ctx.adapter.workspaces.updateWorkspace(this.#workspace.id, {
-      lastResumedAt: new Date().toISOString(),
-      metadata: writePersistedSandboxState(this.#workspace, {
-        kind: "sandbox-session",
-        sessionId: this.#driver.id,
-      }),
-      sandboxId: this.#driver.id,
+      metadata: writePersistedSandboxState(this.#workspace, snapshot),
+      sandboxId: snapshot.sessionId,
     });
     this.#onWorkspaceUpdate?.(this.#workspace);
   }
