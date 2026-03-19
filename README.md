@@ -8,21 +8,18 @@ https://vercel.com/docs/vercel-sandbox/sdk-reference
 
 ```ts
 // lib/sandkit.ts
-import { sandkit } from "sandkit"
-import { drizzleAdapter } from "sandkit/adapters/drizzle"
-import { allowCodex } from "sandkit/policies/codex"
-import { allowGemini } from "sandkit/policies/gemini"
-impoer { db } from "@/db"
+import { sandkit } from "sandkit";
+import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { allowCodex } from "sandkit/policies/codex";
+import { allowGemini } from "sandkit/policies/gemini";
+import { db } from "@/db";
 
 const sandkit = sandkit({
-	database: drizzleAdapter(db, {
-		provider: "sqlite",
-	}),
-	network: [
-	  allowCodex(),
-		allowGemini()
-	]
-})
+  database: drizzleAdapter(db, {
+    provider: "sqlite",
+  }),
+  network: [allowCodex(), allowGemini()],
+});
 ```
 
 ```ts
@@ -58,4 +55,35 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     },
   });
 }
+```
+
+### Drizzle ORM Adapter
+
+```sh
+npm install @better-auth/drizzle-adapter
+```
+
+#### Example Usage
+
+```ts
+import { sandkit } from "sandkit";
+import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { db } from "@/db";
+
+const sandkit = sandkit({
+  database: drizzleAdapter(db, {
+    provider: "sqlite",
+  }),
+  //... the rest of your config
+});
+```
+
+#### Schema generation & migration
+
+```sh
+npx @giselles-ai/sandkit@latest generate
+```
+
+```sh
+npx drizzle-kit generate
 ```
