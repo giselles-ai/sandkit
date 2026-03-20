@@ -13,7 +13,9 @@
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "smoke:vercel-sandbox": "bun run --cwd smoke/vercel-sandbox smoke",
-    "smoke:drizzle": "bun run --cwd smoke/vercel-sandbox smoke:drizzle"
+    "smoke:drizzle": "bun run --cwd smoke/vercel-sandbox smoke:drizzle",
+    "smoke:drizzle-sample": "bun run --cwd smoke/drizzle-sample smoke",
+    "smoke:all": "bun run scripts/smoke-all.mjs"
   },
   "devDependencies": {
     "@types/bun": "latest",

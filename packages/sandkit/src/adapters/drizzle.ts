@@ -29,10 +29,6 @@ interface DrizzleMetadata {
   readonly fullSchema?: DrizzleSchemaMap;
 }
 
-type DatabaseQueryApi = {
-  readonly [key: string]: unknown;
-};
-
 interface DrizzleDatabaseLike {
   select(): {
     from(table: object): {
@@ -50,7 +46,6 @@ interface DrizzleDatabaseLike {
     };
   };
   readonly _?: DrizzleMetadata;
-  readonly query?: DatabaseQueryApi;
 }
 
 interface DrizzleWorkspaceRow {

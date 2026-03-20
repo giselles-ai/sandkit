@@ -1,0 +1,21 @@
+{
+  "name": "smoke-drizzle-sample",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "bun run generate:sandkit && bun run drizzle:generate && bun run drizzle:migrate && bun run app",
+    "generate:sandkit": "bun run scripts/generate-schema.ts",
+    "drizzle:generate": "bunx drizzle-kit generate --config drizzle.config.ts",
+    "drizzle:migrate": "bunx drizzle-kit migrate --config drizzle.config.ts",
+    "app": "bun run app.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "^0.44.2",
+    "sandkit": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
