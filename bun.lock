@@ -28,6 +28,7 @@
     "smoke/vercel-sandbox": {
       "name": "smoke-vercel-sandbox",
       "dependencies": {
+        "drizzle-orm": "^0.44.2",
         "sandkit": "workspace:*",
       },
       "devDependencies": {

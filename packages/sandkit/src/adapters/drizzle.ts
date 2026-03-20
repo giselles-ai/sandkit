@@ -59,9 +59,9 @@ interface DrizzleWorkspaceRow {
   metadata: string | null;
   status: WorkspaceStatus;
   sandboxId: string | null;
-  lastResumedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
+  lastResumedAt: string | number | Date | null;
+  createdAt: string | number | Date;
+  updatedAt: string | number | Date;
 }
 
 export interface DrizzleAdapterOptions<TWorkspaces extends DrizzleWorkspaceTableShape> {
@@ -86,6 +86,26 @@ function toRowRecord(workspace: WorkspaceRecord): DrizzleWorkspaceRow {
   };
 }
 
+function toDriverTimestamp(value: string | number | Date | null): Date | null {
+  if (value === null) {
+    return null;
+  }
+
+  return new Date(value);
+}
+
+function toIsoTimestamp(value: string | number | Date): string {
+  if (typeof value === "number") {
+    return new Date(value).toISOString();
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return value;
+}
+
 function toInsertValues(row: DrizzleWorkspaceRow): Record<string, unknown> {
   return {
     id: row.id,
@@ -93,9 +113,9 @@ function toInsertValues(row: DrizzleWorkspaceRow): Record<string, unknown> {
     metadata: row.metadata,
     status: row.status,
     sandboxId: row.sandboxId,
-    lastResumedAt: row.lastResumedAt,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    lastResumedAt: toDriverTimestamp(row.lastResumedAt ?? null),
+    createdAt: toDriverTimestamp(row.createdAt),
+    updatedAt: toDriverTimestamp(row.updatedAt),
   };
 }
 
@@ -118,9 +138,9 @@ function toWorkspaceRecord(row: DrizzleWorkspaceRow): WorkspaceRecord {
     metadata: readMetadata(row.metadata),
     status: row.status,
     sandboxId: row.sandboxId ?? undefined,
-    lastResumedAt: row.lastResumedAt ?? undefined,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    lastResumedAt: row.lastResumedAt === null ? undefined : toIsoTimestamp(row.lastResumedAt),
+    createdAt: toIsoTimestamp(row.createdAt),
+    updatedAt: toIsoTimestamp(row.updatedAt),
   };
 }
 

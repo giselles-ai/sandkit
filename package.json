@@ -12,7 +12,8 @@
     "lint:fix": "oxlint . --fix",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
-    "smoke:vercel-sandbox": "bun run --cwd smoke/vercel-sandbox smoke"
+    "smoke:vercel-sandbox": "bun run --cwd smoke/vercel-sandbox smoke",
+    "smoke:drizzle": "bun run --cwd smoke/vercel-sandbox smoke:drizzle"
   },
   "devDependencies": {
     "@types/bun": "latest",

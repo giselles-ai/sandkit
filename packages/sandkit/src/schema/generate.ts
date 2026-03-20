@@ -1,26 +1,42 @@
 import type { SandkitSchemaModel, SandkitDialect } from "./model";
 
-const typeMap = {
+interface TypedColumnExpr {
+  type: string;
+  options?: string;
+}
+
+type SchemaTypeMap = Record<
+  string,
+  {
+    text: TypedColumnExpr;
+    integer: TypedColumnExpr;
+    boolean: TypedColumnExpr;
+    json: TypedColumnExpr;
+    timestamp: TypedColumnExpr;
+  }
+>;
+
+const typeMap: SchemaTypeMap = {
   sqlite: {
-    text: "text",
-    integer: "integer",
-    boolean: "integer({ mode: 'boolean' })",
-    json: "text({ mode: 'json' })",
-    timestamp: "integer({ mode: 'timestamp_ms' })",
+    text: { type: "text" },
+    integer: { type: "integer" },
+    boolean: { type: "integer", options: "{ mode: 'boolean' }" },
+    json: { type: "text", options: "{ mode: 'json' }" },
+    timestamp: { type: "integer", options: "{ mode: 'timestamp_ms' }" },
   },
   postgresql: {
-    text: "text",
-    integer: "integer",
-    boolean: "boolean",
-    json: "jsonb",
-    timestamp: "timestamp",
+    text: { type: "text" },
+    integer: { type: "integer" },
+    boolean: { type: "boolean" },
+    json: { type: "jsonb" },
+    timestamp: { type: "timestamp" },
   },
   mysql: {
-    text: "text",
-    integer: "int",
-    boolean: "boolean",
-    json: "json",
-    timestamp: "timestamp",
+    text: { type: "text" },
+    integer: { type: "int" },
+    boolean: { type: "boolean" },
+    json: { type: "json" },
+    timestamp: { type: "timestamp" },
   },
 } as const;
 
@@ -45,7 +61,19 @@ export function renderTextSchema(model: SandkitSchemaModel): string {
 
       const row = table.columns
         .map((column) => {
-          const mappedType = typeMap[model.dialect][column.type];
+          const mappedDialect = typeMap[model.dialect];
+          if (!mappedDialect) {
+            throw new Error(`Unsupported dialect "${model.dialect}"`);
+          }
+
+          const mappedType = mappedDialect[column.type];
+          if (!mappedType) {
+            throw new Error(
+              `Unsupported column type "${column.type}" for dialect "${model.dialect}"`,
+            );
+          }
+
+          const optionsSuffix = mappedType.options ? `, ${mappedType.options}` : "";
           const defaultValue = column.defaultValue === null ? "default null" : "";
           const required = column.nullable === true ? "" : ".notNull()";
           const unique = column.unique ? ".unique()" : "";
@@ -55,13 +83,13 @@ export function renderTextSchema(model: SandkitSchemaModel): string {
                 exportNameByTable.get(column.references.table) ?? column.references.table
               }.${column.references.field})`
             : "";
-          return `${column.name}: ${mappedType}("${column.name}")${required}${defaultValue}${unique}${primary}${ref}`;
+          return `${column.name}: ${mappedType.type}("${column.name}"${optionsSuffix})${required}${defaultValue}${unique}${primary}${ref}`;
         })
         .join(",\n");
 
-      const rows = row ? `\n  ${row}\n` : "";
+      const rows = row ? `\n  ${row}\n` : "\n";
       const exportName = table.exportName ?? table.name;
-      return `export const ${exportName} = ${tableExpr}${rows});`;
+      return `export const ${exportName} = ${tableExpr}${rows}});`;
     })
     .join("\n\n");
 
