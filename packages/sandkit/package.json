@@ -2,31 +2,41 @@
   "name": "sandkit",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "sandkit": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "type": "module",
-  "module": "src/index.ts",
-  "types": "src/index.ts",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts",
-    "./core/*": "./src/core/*",
-    "./adapters/*": "./src/adapters/*",
-    "./drivers/*": "./src/drivers/*",
-    "./policies/*": "./src/policies/*",
-    "./schema/*": "./src/schema/*",
-    "./cli/*": "./src/cli/*"
+    ".": "./dist/index.js",
+    "./adapters/drizzle": "./dist/adapters/drizzle.js",
+    "./adapters/sqlite-bun": "./dist/adapters/sqlite-bun.js",
+    "./policies/codex": "./dist/policies/codex.js",
+    "./policies/gemini": "./dist/policies/gemini.js",
+    "./schema": "./dist/schema/index.js",
+    "./cli": "./dist/cli/index.js"
   },
   "scripts": {
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
-    "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check"
+    "lint": "oxlint src tsup.config.ts",
+    "lint:fix": "oxlint src tsup.config.ts --fix",
+    "fmt": "oxfmt src tsup.config.ts",
+    "fmt:check": "oxfmt --check src tsup.config.ts",
+    "build": "bun run clean && tsup",
+    "clean": "del-cli dist *.tsbuildinfo"
   },
   "dependencies": {
     "@vercel/sandbox": "1.8.1"
   },
   "devDependencies": {
     "@types/bun": "1.3.11",
-    "drizzle-orm": "^0.44.2"
+    "del-cli": "7.0.0",
+    "drizzle-orm": "0.45.1",
+    "tsup": "8.5.1"
   },
   "peerDependencies": {
     "drizzle-orm": "^0.44.2",
