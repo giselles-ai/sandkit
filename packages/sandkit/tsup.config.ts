@@ -26,9 +26,6 @@ export default defineConfig([
     outDir: "dist",
     format: ["esm"],
     target: "esnext",
-    banner: {
-      js: "#!/usr/bin/env node",
-    },
     sourcemap: true,
     external: ["drizzle-orm", "@vercel/sandbox"],
   },
