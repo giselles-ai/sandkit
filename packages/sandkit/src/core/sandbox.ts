@@ -1,32 +1,17 @@
-import type {
-  CommandResult,
-  PersistedSandboxState,
-  SandboxDriver,
-  WorkspaceRecord,
-} from "../types.ts";
-import type { SandkitContext } from "./context.ts";
-import { writePersistedSandboxState } from "./workspace-state.ts";
+import type { CommandResult, SandboxDriver } from "../types.ts";
+import type { SandboxCommit } from "./workspace-state.ts";
 
 export interface WorkspaceSandboxHandle {
   runCommand(command: string, args: string[]): Promise<CommandResult>;
 }
 
 export class ManagedSandbox {
-  readonly #ctx: SandkitContext;
   readonly #driver: SandboxDriver;
-  #workspace: WorkspaceRecord;
-  readonly #onWorkspaceUpdate?: ((workspace: WorkspaceRecord) => void) | undefined;
+  readonly #onCommit?: ((commit: SandboxCommit) => Promise<void>) | undefined;
 
-  constructor(
-    ctx: SandkitContext,
-    workspace: WorkspaceRecord,
-    driver: SandboxDriver,
-    onWorkspaceUpdate?: (workspace: WorkspaceRecord) => void,
-  ) {
-    this.#ctx = ctx;
-    this.#workspace = workspace;
+  constructor(driver: SandboxDriver, onCommit?: (commit: SandboxCommit) => Promise<void>) {
     this.#driver = driver;
-    this.#onWorkspaceUpdate = onWorkspaceUpdate;
+    this.#onCommit = onCommit;
   }
 
   get id(): string {
@@ -45,10 +30,6 @@ export class ManagedSandbox {
     }
   }
 
-  async snapshot(): Promise<PersistedSandboxState> {
-    return this.#driver.snapshot();
-  }
-
   private ensureCommandShape(command: string, args: string[]): void {
     if (!command.trim()) {
       throw new Error("Sandbox command must not be empty.");
@@ -61,11 +42,14 @@ export class ManagedSandbox {
 
   private async persistDurableState(): Promise<void> {
     const snapshot = await this.#driver.snapshot();
-    this.#workspace = await this.#ctx.adapter.workspaces.updateWorkspace(this.#workspace.id, {
-      metadata: writePersistedSandboxState(this.#workspace, snapshot),
-      sandboxId: snapshot.sessionId,
-    });
-    this.#onWorkspaceUpdate?.(this.#workspace);
+    const commit: SandboxCommit = {
+      kind: "snapshot",
+      state: snapshot,
+    };
+    if (this.#onCommit) {
+      await this.#onCommit(commit);
+    }
+    return;
   }
 }
 

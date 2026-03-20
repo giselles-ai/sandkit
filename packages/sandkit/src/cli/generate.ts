@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
-import { createModelSnapshot } from "../schema/model";
+
 import { createGeneratePayload } from "../schema/generate";
+import { createModelSnapshot } from "../schema/model";
 import type { SandkitGenerateArgs, SandkitGenerateResult } from "./types";
 
 function usage() {

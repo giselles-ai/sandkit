@@ -1,7 +1,13 @@
 import type { WorkspaceRecord } from "../types.ts";
 import type { SandkitContext } from "./context.ts";
 import { LazySandboxHandle, ManagedSandbox, WorkspaceSandboxHandle } from "./sandbox.ts";
-import { readPersistedSandboxState, writePersistedSandboxState } from "./workspace-state.ts";
+import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
+import {
+  readWorkspaceSandboxState,
+  toDriverResumeState,
+  transitionAfterCommandCommit,
+  transitionToSession,
+} from "./workspace-state.ts";
 
 export interface PublicWorkspaceHandle {
   readonly id: string;
@@ -12,11 +18,13 @@ export interface PublicWorkspaceHandle {
 export class WorkspaceHandle implements PublicWorkspaceHandle {
   readonly #ctx: SandkitContext;
   #record: WorkspaceRecord;
+  #sandboxState: WorkspaceSandboxState;
   #lazySandbox?: WorkspaceSandboxHandle;
 
   constructor(ctx: SandkitContext, record: WorkspaceRecord) {
     this.#ctx = ctx;
     this.#record = record;
+    this.#sandboxState = readWorkspaceSandboxState(record);
   }
 
   get id(): string {
@@ -39,22 +47,26 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
    */
   async createOrResumeSandbox(): Promise<ManagedSandbox> {
     const workspace = await this.resolveLatestWorkspace();
-    const persistedSandbox = readPersistedSandboxState(workspace);
-    const sandbox = persistedSandbox
-      ? await this.#ctx.driverFactory.resumeSandbox(workspace, persistedSandbox)
+    const resumeState = toDriverResumeState(this.#sandboxState);
+    const sandbox = resumeState
+      ? await this.#ctx.driverFactory.resumeSandbox(workspace, resumeState)
       : await this.#ctx.driverFactory.createSandbox(workspace);
 
-    this.#record = await this.#ctx.adapter.workspaces.updateWorkspace(workspace.id, {
-      lastResumedAt: new Date().toISOString(),
-      metadata: writePersistedSandboxState(workspace, {
-        kind: persistedSandbox?.kind ?? "sandbox-session",
-        sessionId: sandbox.id,
-      }),
-      sandboxId: sandbox.id,
-    });
+    const now = new Date().toISOString();
+    const transition = transitionToSession(sandbox.id, now);
+    this.#record = await this.#ctx.adapter.workspaces.updateWorkspace(
+      workspace.id,
+      transition.patch,
+    );
+    this.#sandboxState = transition.nextState;
 
-    return new ManagedSandbox(this.#ctx, this.#record, sandbox, (record) => {
-      this.#record = record;
+    return new ManagedSandbox(sandbox, async (commit: SandboxCommit) => {
+      const next = transitionAfterCommandCommit(commit, new Date().toISOString());
+      this.#record = await this.#ctx.adapter.workspaces.updateWorkspace(
+        this.#record.id,
+        next.patch,
+      );
+      this.#sandboxState = next.nextState;
     });
   }
 
@@ -64,6 +76,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       throw new Error(`Workspace with id "${this.#record.id}" no longer exists`);
     }
     this.#record = latest;
+    this.#sandboxState = readWorkspaceSandboxState(latest);
     return latest;
   }
 }

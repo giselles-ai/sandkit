@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+
 import { createBunSqliteAdapter, createVercelSandboxDriverFactory, sandkit } from "sandkit";
 
 const SQLITE_PATH = process.env.SMOKE_WORKSPACE_DB_PATH ?? "./smoke-workspaces.sqlite";
