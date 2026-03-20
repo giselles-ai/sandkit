@@ -49,6 +49,15 @@ export interface WorkspaceSandboxTransition {
   readonly patch: WorkspaceUpdateInput;
 }
 
+export interface WorkspaceSandboxTransitionResult {
+  readonly record: WorkspaceRecord;
+  readonly state: WorkspaceSandboxState;
+}
+
+export interface WorkspaceStateStore {
+  updateWorkspace(id: string, input: WorkspaceUpdateInput): Promise<WorkspaceRecord>;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -109,6 +118,10 @@ function toSerializedWorkspaceState(state: WorkspaceSandboxState): SerializedWor
       return { kind: "cold" };
     }
   }
+}
+
+export function makeSnapshotCommit(state: PersistedSandboxState): SandboxCommit {
+  return toSnapshotCommit(state);
 }
 
 export function asWorkspaceSandboxStateMetadata(
@@ -197,4 +210,16 @@ export function toDriverResumeState(state: WorkspaceSandboxState): PersistedSand
   }
 
   return null;
+}
+
+export async function persistSandboxTransition(
+  store: WorkspaceStateStore,
+  workspaceId: string,
+  transition: WorkspaceSandboxTransition,
+): Promise<WorkspaceSandboxTransitionResult> {
+  const record = await store.updateWorkspace(workspaceId, transition.patch);
+  return {
+    record,
+    state: transition.nextState,
+  };
 }

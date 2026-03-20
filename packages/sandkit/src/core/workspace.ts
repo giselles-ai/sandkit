@@ -4,7 +4,9 @@ import { LazySandboxHandle, ManagedSandbox, WorkspaceSandboxHandle } from "./san
 import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
 import {
   readWorkspaceSandboxState,
+  persistSandboxTransition,
   toDriverResumeState,
+  type WorkspaceSandboxTransition,
   transitionAfterCommandCommit,
   transitionToSession,
 } from "./workspace-state.ts";
@@ -47,27 +49,30 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
    */
   async createOrResumeSandbox(): Promise<ManagedSandbox> {
     const workspace = await this.resolveLatestWorkspace();
-    const resumeState = toDriverResumeState(this.#sandboxState);
-    const sandbox = resumeState
-      ? await this.#ctx.driverFactory.resumeSandbox(workspace, resumeState)
-      : await this.#ctx.driverFactory.createSandbox(workspace);
-
-    const now = new Date().toISOString();
-    const transition = transitionToSession(sandbox.id, now);
-    this.#record = await this.#ctx.adapter.workspaces.updateWorkspace(
-      workspace.id,
-      transition.patch,
-    );
-    this.#sandboxState = transition.nextState;
+    const sandbox = await this.resolveSandboxDriver(workspace);
+    await this.persistSandboxState(transitionToSession(sandbox.id, new Date().toISOString()));
 
     return new ManagedSandbox(sandbox, async (commit: SandboxCommit) => {
       const next = transitionAfterCommandCommit(commit, new Date().toISOString());
-      this.#record = await this.#ctx.adapter.workspaces.updateWorkspace(
-        this.#record.id,
-        next.patch,
-      );
-      this.#sandboxState = next.nextState;
+      await this.persistSandboxState(next);
     });
+  }
+
+  private async resolveSandboxDriver(workspace: WorkspaceRecord) {
+    const resumeState = toDriverResumeState(this.#sandboxState);
+    return resumeState
+      ? await this.#ctx.driverFactory.resumeSandbox(workspace, resumeState)
+      : await this.#ctx.driverFactory.createSandbox(workspace);
+  }
+
+  private async persistSandboxState(transition: WorkspaceSandboxTransition): Promise<void> {
+    const result = await persistSandboxTransition(
+      this.#ctx.adapter.workspaces,
+      this.#record.id,
+      transition,
+    );
+    this.#record = result.record;
+    this.#sandboxState = result.state;
   }
 
   private async resolveLatestWorkspace(): Promise<WorkspaceRecord> {

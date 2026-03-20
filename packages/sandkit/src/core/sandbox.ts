@@ -1,5 +1,5 @@
 import type { CommandResult, SandboxDriver } from "../types.ts";
-import type { SandboxCommit } from "./workspace-state.ts";
+import { makeSnapshotCommit, type SandboxCommit } from "./workspace-state.ts";
 
 export interface WorkspaceSandboxHandle {
   runCommand(command: string, args: string[]): Promise<CommandResult>;
@@ -20,14 +20,7 @@ export class ManagedSandbox {
 
   async runCommand(command: string, args: string[]): Promise<CommandResult> {
     this.ensureCommandShape(command, args);
-    try {
-      const result = await this.#driver.runCommand(command, args);
-      await this.persistDurableState();
-      return result;
-    } catch (error) {
-      await this.persistDurableState();
-      throw error;
-    }
+    return this.runUnitOfWork(async () => this.#driver.runCommand(command, args));
   }
 
   private ensureCommandShape(command: string, args: string[]): void {
@@ -40,12 +33,25 @@ export class ManagedSandbox {
     }
   }
 
-  private async persistDurableState(): Promise<void> {
+  private async runUnitOfWork<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      const result = await operation();
+      const commit = await this.createDurableCommit();
+      await this.persistCommit(commit);
+      return result;
+    } catch (error) {
+      const commit = await this.createDurableCommit();
+      await this.persistCommit(commit);
+      throw error;
+    }
+  }
+
+  private async createDurableCommit(): Promise<SandboxCommit> {
     const snapshot = await this.#driver.snapshot();
-    const commit: SandboxCommit = {
-      kind: "snapshot",
-      state: snapshot,
-    };
+    return makeSnapshotCommit(snapshot);
+  }
+
+  private async persistCommit(commit: SandboxCommit): Promise<void> {
     if (this.#onCommit) {
       await this.#onCommit(commit);
     }
