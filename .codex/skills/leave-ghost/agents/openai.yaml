@@ -1,0 +1,3 @@
+display_name: Leave Ghost
+short_description: Preserve judgment and intent for later agents
+default_prompt: Write a ghost file for this session that captures a short letter, then decisions, built artifacts, guardrails, and next steps.
