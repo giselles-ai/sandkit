@@ -26,6 +26,7 @@ export interface SandkitTable {
   name: string;
   schema?: string;
   comment?: string;
+  exportName?: string;
   columns: SandkitColumn[];
   indexes?: SandkitIndex[];
 }
@@ -40,10 +41,13 @@ export interface SandkitSchemaModel {
 const nowIso = () => new Date().toISOString();
 
 const baseSchemaName = "sandkit";
-const tablePrefix = "sk_";
+const tablePrefix = "sandkit_";
+
+export const sandkitWorkspaceExport = "sandkitWorkspaces";
 
 export const sandkitWorkspaceTable: SandkitTable = {
   name: `${tablePrefix}workspaces`,
+  exportName: sandkitWorkspaceExport,
   comment: "Persistent workspace metadata.",
   columns: [
     {
@@ -54,16 +58,27 @@ export const sandkitWorkspaceTable: SandkitTable = {
       comment: "Workspace identifier.",
     },
     {
-      name: "sandbox_id",
+      name: "metadata",
+      type: "json",
+      nullable: true,
+      comment: "Durable workspace metadata, including sandbox lifecycle state.",
+    },
+    {
+      name: "sandboxId",
       type: "text",
-      nullable: false,
+      nullable: true,
       comment: "Stable id returned by the sandbox provider.",
     },
     { name: "status", type: "text", nullable: false },
-    { name: "template", type: "text", nullable: true },
     { name: "name", type: "text", nullable: true },
-    { name: "created_at", type: "timestamp", nullable: false },
-    { name: "updated_at", type: "timestamp", nullable: false },
+    {
+      name: "lastResumedAt",
+      type: "timestamp",
+      nullable: true,
+      comment: "Most recent point when Sandkit resolved a concrete sandbox session.",
+    },
+    { name: "createdAt", type: "timestamp", nullable: false },
+    { name: "updatedAt", type: "timestamp", nullable: false },
   ],
   indexes: [{ name: "workspaces_status_idx", columns: ["status"] }],
 };

@@ -31,6 +31,10 @@ const tableFactoryByDialect = {
 } as const;
 
 export function renderTextSchema(model: SandkitSchemaModel): string {
+  const exportNameByTable = new Map(
+    model.tables.map((table) => [table.name, table.exportName ?? table.name]),
+  );
+
   const entries = model.tables
     .map((table) => {
       const builder = tableFactoryByDialect[model.dialect];
@@ -47,14 +51,17 @@ export function renderTextSchema(model: SandkitSchemaModel): string {
           const unique = column.unique ? ".unique()" : "";
           const primary = column.primaryKey ? ".primaryKey()" : "";
           const ref = column.references
-            ? `.references(() => ${column.references.table}.${column.references.field})`
+            ? `.references(() => ${
+                exportNameByTable.get(column.references.table) ?? column.references.table
+              }.${column.references.field})`
             : "";
           return `${column.name}: ${mappedType}("${column.name}")${required}${defaultValue}${unique}${primary}${ref}`;
         })
         .join(",\n");
 
       const rows = row ? `\n  ${row}\n` : "";
-      return `export const ${table.name} = ${tableExpr}${rows});`;
+      const exportName = table.exportName ?? table.name;
+      return `export const ${exportName} = ${tableExpr}${rows});`;
     })
     .join("\n\n");
 
@@ -66,7 +73,12 @@ export function renderTextSchema(model: SandkitSchemaModel): string {
 
   const maybeExtras = model.dialect === "sqlite" ? "" : model.dialect === "postgresql" ? "" : "";
 
-  return `// This file is generated from Sandkit schema model.\n// Provider: ${model.dialect}\n// Version: ${1}\n\n${imports[model.dialect]}\n\n${entries}\n\nexport const sandkitSchema = {\n${model.tables.map((table) => `  ${table.name},`).join("\n")}\n};\n${maybeExtras}\n`;
+  return `// This file is generated from Sandkit schema model.\n// Provider: ${model.dialect}\n// Version: ${1}\n\n${imports[model.dialect]}\n\n${entries}\n\nexport const sandkitSchema = {\n${model.tables
+    .map((table) => {
+      const exportName = table.exportName ?? table.name;
+      return `  ${exportName},`;
+    })
+    .join("\n")}\n};\n${maybeExtras}\n`;
 }
 
 export function createGeneratePayload(dialect: SandkitDialect, model: SandkitSchemaModel) {

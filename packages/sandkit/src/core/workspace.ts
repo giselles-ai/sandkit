@@ -1,6 +1,7 @@
 import type { WorkspaceRecord } from "../types.ts";
 import type { SandkitContext } from "./context.ts";
-import { LazySandboxHandle, ManagedSandbox, WorkspaceSandboxHandle } from "./sandbox.ts";
+import { LazySandboxHandle, ManagedSandbox } from "./sandbox.ts";
+import type { WorkspaceSandboxHandle } from "./sandbox.ts";
 import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
 import {
   readWorkspaceSandboxState,
@@ -21,7 +22,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   readonly #ctx: SandkitContext;
   #record: WorkspaceRecord;
   #sandboxState: WorkspaceSandboxState;
-  #lazySandbox?: WorkspaceSandboxHandle;
+  #lazySandbox?: LazySandboxHandle;
 
   constructor(ctx: SandkitContext, record: WorkspaceRecord) {
     this.#ctx = ctx;

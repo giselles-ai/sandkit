@@ -24,18 +24,17 @@ const sandkit = sandkit({
 
 ```ts
 // api/sandkit-sample/route.ts
-import { sandkit } from "@/lib/sandkit"
+import { sandkit } from "@/lib/sandkit";
 
-export async funciton POST() {
-  const workspace = await sandkit.createWorkspace()
-  const sandbox = workspace.createOrResumeSandbox()
-  await sandbox.runCommand("echo", ["hello world", ">", "./hello.txt"])
+export async function POST() {
+  const workspace = await sandkit.createWorkspace();
+  await workspace.sandbox.runCommand("sh", ["-lc", "echo 'hello world' > ./hello.txt"]);
   return new Response(JSON.stringify({ workspaceId: workspace.id }), {
     status: 200,
     headers: {
       "content-type": "application/json",
     },
-  })
+  });
 }
 ```
 
@@ -46,8 +45,7 @@ import { sandkit } from "@/lib/sandkit";
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const workspace = await sandkit.getWorkspace(id);
-  const sandbox = await workspace.createOrResumeSandbox();
-  const result = await sandbox.runCommand("cat", ["./hello.txt"]);
+  const result = await workspace.sandbox.runCommand("cat", ["./hello.txt"]);
   return new Response(JSON.stringify({ output: result.stdout }), {
     status: 200,
     headers: {
@@ -60,7 +58,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 ### Drizzle ORM Adapter
 
 ```sh
-npm install @better-auth/drizzle-adapter
+npm install sandkit drizzle-orm
 ```
 
 #### Example Usage
@@ -75,6 +73,19 @@ const sandkit = sandkit({
     provider: "sqlite",
   }),
   //... the rest of your config
+});
+```
+
+The generated schema exports a canonical workspace table as `sandkitWorkspaces`.
+
+If you use custom table names, pass an explicit `workspaces` table to `drizzleAdapter`:
+
+```ts
+const sandkit = sandkit({
+  database: drizzleAdapter(db, {
+    provider: "sqlite",
+    workspaces: schema.sandkitWorkspaceTable,
+  }),
 });
 ```
 

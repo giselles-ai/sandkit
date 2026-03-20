@@ -32,7 +32,7 @@ export type SandkitRunResult = ReturnType<typeof runGenerateCommand>;
 export function runCli(argv = process.argv.slice(2)): SandkitRunResult {
   const parsed = parseArgs(argv);
   if (parsed.command === "generate") {
-    return runGenerateCommand({ command: "generate", ...parsed });
+    return runGenerateCommand(parsed);
   }
 
   throw new Error(`Unhandled command: ${parsed.command}`);

@@ -6,3 +6,4 @@ prefix_rule(
   pattern=["rm", "-f" , "smoke/vercel-sandbox/smoke-workspaces.sqlite"],
   decision="allow"
 )
+prefix_rule(pattern=["bun", "x", "tsc"], decision="allow")
