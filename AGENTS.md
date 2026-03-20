@@ -1,6 +1,8 @@
 # AGENTS.md
 
-This repository keeps a human-triggered ghost trail for later agents.
+## Workflow
+
+At the start of each thread, check the ghost first.
 
 ## Ghost
 
