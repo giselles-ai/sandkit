@@ -92,10 +92,11 @@ const sandkit = sandkit({
 #### Schema generation & migration
 
 ```sh
-npx @giselles-ai/sandkit@latest generate
-```
+# Explicit path
+npx @giselles-ai/sandkit@latest generate --adapter drizzle --provider sqlite
 
-```sh
+# Or let discovery infer provider from a Drizzle repository
+npx @giselles-ai/sandkit@latest generate
 npx drizzle-kit generate
 ```
 

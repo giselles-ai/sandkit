@@ -1,18 +1,20 @@
-import { parseGenerateArgs, runGenerateCommand } from "./generate";
-import type { SandkitCliCommand, SandkitGenerateArgs } from "./types";
+import { parseGenerateArgs, runCliGenerate } from "./generate";
+import type { SandkitCliCommand, SandkitGenerateArgs, SandkitGenerateResult } from "./types";
 
 function buildHelp() {
   return [
     "Sandkit CLI",
     "Commands: generate",
     "",
-    "  sandkit generate --provider <sqlite|postgresql|mysql> [--stdout] [--out file]",
+    "  sandkit generate [--adapter drizzle] [--provider <sqlite|postgresql|mysql>] [--stdout] [--out file]",
     "",
     "When --stdout is set, output is returned in memory and printed by caller.",
   ].join("\n");
 }
 
-function parseArgs(argv: string[]): { command: SandkitCliCommand } & SandkitGenerateArgs {
+function parseArgs(
+  argv: string[],
+): { command: SandkitCliCommand; rest: string[] } & SandkitGenerateArgs {
   if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
     throw new Error(buildHelp());
   }
@@ -24,15 +26,16 @@ function parseArgs(argv: string[]): { command: SandkitCliCommand } & SandkitGene
 
   const rest = argv.slice(1);
   const commandOptions = parseGenerateArgs(rest);
-  return { command, ...commandOptions };
+  return { command, ...commandOptions, rest };
 }
 
-export type SandkitRunResult = ReturnType<typeof runGenerateCommand>;
+export type SandkitRunResult = SandkitGenerateResult;
 
-export function runCli(argv = process.argv.slice(2)): SandkitRunResult {
+export async function runCli(argv = process.argv.slice(2)): Promise<SandkitRunResult> {
   const parsed = parseArgs(argv);
   if (parsed.command === "generate") {
-    return runGenerateCommand(parsed);
+    const { rest } = parsed;
+    return runCliGenerate(rest);
   }
 
   throw new Error(`Unhandled command: ${parsed.command}`);

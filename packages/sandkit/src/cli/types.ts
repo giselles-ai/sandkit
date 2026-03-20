@@ -1,16 +1,28 @@
 export type SandkitCliCommand = "generate";
 
+export type SandkitSupportedAdapter = "drizzle";
+export type SandkitDialect = "sqlite" | "postgresql" | "mysql";
+
 export interface SandkitGenerateArgs {
-  provider: "sqlite" | "postgresql" | "mysql";
+  provider?: SandkitDialect;
+  adapter?: SandkitSupportedAdapter;
+  out?: string;
+  stdout: boolean;
+}
+
+export interface SandkitGenerateResolvedArgs {
+  provider: SandkitDialect;
+  adapter?: SandkitSupportedAdapter;
   out?: string;
   stdout: boolean;
 }
 
 export interface SandkitCliOptions {
   command: SandkitCliCommand;
-  provider: SandkitGenerateArgs["provider"];
-  out?: SandkitGenerateArgs["out"];
-  stdout: SandkitGenerateArgs["stdout"];
+  provider?: SandkitDialect;
+  adapter?: SandkitSupportedAdapter;
+  out?: string;
+  stdout: boolean;
 }
 
 export interface SandkitGenerateResult {
