@@ -114,7 +114,7 @@ async function runSmoke(): Promise<void> {
     }
 
     const completedRuns = replaySqlite
-      .query<{ count: number }>(
+      .query<{ count: number }, [string]>(
         "SELECT COUNT(*) as count FROM sandkit_runs WHERE workspace_id = ? AND status IN ('succeeded', 'failed')",
       )
       .get(workspace.id)?.count;
@@ -126,7 +126,7 @@ async function runSmoke(): Promise<void> {
     }
 
     const unresolvedRuns = replaySqlite
-      .query<{ count: number }>(
+      .query<{ count: number }, [string]>(
         "SELECT COUNT(*) as count FROM sandkit_runs WHERE workspace_id = ? AND status = 'started'",
       )
       .get(workspace.id)?.count;
@@ -136,7 +136,7 @@ async function runSmoke(): Promise<void> {
     }
 
     const runWithMissingFacts = replaySqlite
-      .query<{ count: number }>(
+      .query<{ count: number }, [string]>(
         "SELECT COUNT(*) as count FROM sandkit_runs WHERE workspace_id = ? AND (policy_snapshot_id IS NULL OR provider_commit IS NULL OR execution_target_id IS NULL OR provider IS NULL)",
       )
       .get(workspace.id)?.count;
@@ -148,7 +148,7 @@ async function runSmoke(): Promise<void> {
     }
 
     const policySnapshots = replaySqlite
-      .query<{ count: number }>("SELECT COUNT(*) as count FROM sandkit_policies WHERE workspace_id = ?")
+      .query<{ count: number }, [string]>("SELECT COUNT(*) as count FROM sandkit_policies WHERE workspace_id = ?")
       .get(workspace.id)?.count;
 
     if (policySnapshots !== 2) {
