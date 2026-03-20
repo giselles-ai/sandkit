@@ -26,8 +26,13 @@ function migrate(sqlite: Database): void {
     CREATE TABLE IF NOT EXISTS sandkit_runs (
       id TEXT PRIMARY KEY NOT NULL,
       workspace_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      execution_target_id TEXT NOT NULL,
       command TEXT NOT NULL,
       args TEXT,
+      status TEXT NOT NULL,
+      policy_snapshot_id TEXT,
+      provider_commit TEXT,
       exit_code INTEGER,
       stdout TEXT,
       stderr TEXT,
@@ -58,6 +63,7 @@ async function loadGeneratedSchema(): Promise<Record<string, unknown>> {
 }
 
 async function runSmoke(): Promise<void> {
+  await rm(SQLITE_PATH, { force: true });
   const sqlite = new Database(SQLITE_PATH);
   const expectedName = "drizzle-smoke";
   const schemaFile = join(process.cwd(), SCHEMA_PATH);
@@ -85,6 +91,14 @@ async function runSmoke(): Promise<void> {
     });
 
     const workspace = await app.createWorkspace({ name: expectedName });
+    const writeResult = await workspace.sandbox.runCommand("echo", ["hello"]);
+    if (writeResult.exitCode !== 0) {
+      throw new Error("Smoke failed: expected successful command exit code 0");
+    }
+    const failResult = await workspace.sandbox.runCommand("unsupported", ["cmd"]);
+    if (failResult.exitCode === 0) {
+      throw new Error("Smoke failed: expected failing command exit code != 0");
+    }
 
     replaySqlite = new Database(SQLITE_PATH);
     const replayDb = drizzle(replaySqlite, { schema });
@@ -97,6 +111,50 @@ async function runSmoke(): Promise<void> {
     const reloaded = await replayApp.getWorkspace(workspace.id);
     if (reloaded.id !== workspace.id || reloaded.record.name !== expectedName) {
       throw new Error("Smoke assertion failed: workspace could not be reloaded");
+    }
+
+    const completedRuns = replaySqlite
+      .query<{ count: number }>(
+        "SELECT COUNT(*) as count FROM sandkit_runs WHERE workspace_id = ? AND status IN ('succeeded', 'failed')",
+      )
+      .get(workspace.id)?.count;
+
+    if (completedRuns !== 2) {
+      throw new Error(
+        `Smoke assertion failed: expected 2 completed runs, got ${completedRuns === undefined ? 0 : completedRuns}`,
+      );
+    }
+
+    const unresolvedRuns = replaySqlite
+      .query<{ count: number }>(
+        "SELECT COUNT(*) as count FROM sandkit_runs WHERE workspace_id = ? AND status = 'started'",
+      )
+      .get(workspace.id)?.count;
+
+    if (unresolvedRuns !== 0) {
+      throw new Error(`Smoke assertion failed: expected no started runs, got ${unresolvedRuns}`);
+    }
+
+    const runWithMissingFacts = replaySqlite
+      .query<{ count: number }>(
+        "SELECT COUNT(*) as count FROM sandkit_runs WHERE workspace_id = ? AND (policy_snapshot_id IS NULL OR provider_commit IS NULL OR execution_target_id IS NULL OR provider IS NULL)",
+      )
+      .get(workspace.id)?.count;
+
+    if (runWithMissingFacts !== 0) {
+      throw new Error(
+        `Smoke assertion failed: expected all runs to persist required facts, got ${runWithMissingFacts}`,
+      );
+    }
+
+    const policySnapshots = replaySqlite
+      .query<{ count: number }>("SELECT COUNT(*) as count FROM sandkit_policies WHERE workspace_id = ?")
+      .get(workspace.id)?.count;
+
+    if (policySnapshots !== 2) {
+      throw new Error(
+        `Smoke assertion failed: expected 2 policy snapshots, got ${policySnapshots === undefined ? 0 : policySnapshots}`,
+      );
     }
 
     console.log("smokeDrizzleWorkspaceId", reloaded.id);

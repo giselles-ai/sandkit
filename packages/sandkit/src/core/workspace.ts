@@ -1,4 +1,4 @@
-import type { WorkspaceRecord } from "../types.ts";
+import type { RunFinishInput as AdapterRunFinishInput, WorkspaceRecord } from "../types.ts";
 import type { SandkitContext } from "./context.ts";
 import { LazySandboxHandle, ManagedSandbox } from "./sandbox.ts";
 import type { WorkspaceSandboxHandle } from "./sandbox.ts";
@@ -16,6 +16,10 @@ export interface PublicWorkspaceHandle {
   readonly id: string;
   readonly record: WorkspaceRecord;
   readonly sandbox: WorkspaceSandboxHandle;
+}
+
+interface RunFinishInput extends AdapterRunFinishInput {
+  runId: string;
 }
 
 export class WorkspaceHandle implements PublicWorkspaceHandle {
@@ -53,10 +57,40 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     const sandbox = await this.resolveSandboxDriver(workspace);
     await this.persistSandboxState(transitionToSession(sandbox.id, new Date().toISOString()));
 
-    return new ManagedSandbox(sandbox, async (commit: SandboxCommit) => {
-      const next = transitionAfterCommandCommit(commit, new Date().toISOString());
-      await this.persistSandboxState(next);
-    });
+    return new ManagedSandbox(
+      sandbox,
+      async (commit: SandboxCommit) => {
+        const next = transitionAfterCommandCommit(commit, new Date().toISOString());
+        await this.persistSandboxState(next);
+      },
+      {
+        onRunStart: async (input) => {
+          const policySnapshot = await this.createPolicySnapshot();
+          const run = await this.#ctx.adapter.runs.createRun({
+            workspaceId: this.#record.id,
+            provider: sandbox.provider,
+            executionTargetId: sandbox.id,
+            command: input.command,
+            args: input.args,
+            status: "started",
+            startedAt: input.startedAt,
+            policySnapshotId: policySnapshot.id,
+          });
+
+          return run.id;
+        },
+        onRunFinish: async (input: RunFinishInput) => {
+          await this.#ctx.adapter.runs.finishRun(input.runId, {
+            status: input.status,
+            finishedAt: input.finishedAt,
+            exitCode: input.exitCode ?? null,
+            stdout: input.stdout ?? null,
+            stderr: input.stderr ?? null,
+            providerCommit: input.providerCommit,
+          });
+        },
+      },
+    );
   }
 
   private async resolveSandboxDriver(workspace: WorkspaceRecord) {
@@ -84,5 +118,23 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     this.#record = latest;
     this.#sandboxState = readWorkspaceSandboxState(latest);
     return latest;
+  }
+
+  private async createPolicySnapshot() {
+    const policyId = this.policySetId();
+    return this.#ctx.adapter.policySnapshots.createPolicySnapshot({
+      workspaceId: this.#record.id,
+      policyId,
+      config: {
+        networkPolicies: this.#ctx.networkPolicies,
+      },
+    });
+  }
+
+  private policySetId(): string {
+    if (this.#ctx.networkPolicies.length === 0) {
+      return "default";
+    }
+    return this.#ctx.networkPolicies.map((policy) => policy.id).join(",");
   }
 }

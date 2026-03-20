@@ -1,12 +1,29 @@
 import type { Database } from "bun:sqlite";
 
+import { createId } from "../core/ids.ts";
 import type {
   SandkitAdapter,
   WorkspaceCreateInput,
+  WorkspaceMetadata,
   WorkspaceRecord,
   WorkspaceUpdateInput,
+  RunStatus,
   WorkspaceStatus,
-} from "./types.ts";
+  RunAdapter,
+  RunCreateInput,
+  RunFinishInput,
+  RunRecord,
+  PolicySnapshotAdapter,
+  PolicySnapshotCreateInput,
+  PolicySnapshotRecord,
+} from "./types";
+
+const workspaceStatuses = new Set<WorkspaceStatus>(["active", "inactive", "archived"]);
+const runStatuses = new Set<RunStatus>(["started", "succeeded", "failed"]);
+
+function corruptionError(table: string, column: string, reason: string): Error {
+  return new Error(`Sandkit durable state corruption in ${table}.${column}: ${reason}`);
+}
 
 interface SqliteWorkspaceRow {
   id: string;
@@ -17,6 +34,244 @@ interface SqliteWorkspaceRow {
   lastResumedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface SqliteRunRow {
+  id: string;
+  workspace_id: string;
+  provider: string;
+  execution_target_id: string;
+  command: string;
+  args: string | null;
+  status: string;
+  policy_snapshot_id: string | null;
+  provider_commit: string | null;
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+function toJsonString(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function parseJsonColumn(table: string, column: string, value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw corruptionError(table, column, error instanceof Error ? error.message : "invalid JSON");
+  }
+}
+
+function readWorkspaceStatus(value: string): WorkspaceStatus {
+  if (workspaceStatuses.has(value as WorkspaceStatus)) {
+    return value as WorkspaceStatus;
+  }
+  throw corruptionError("sandkit_workspaces", "status", `unexpected value "${value}"`);
+}
+
+function readRunStatus(value: string): RunStatus {
+  if (runStatuses.has(value as RunStatus)) {
+    return value as RunStatus;
+  }
+  throw corruptionError("sandkit_runs", "status", `unexpected value "${value}"`);
+}
+
+function readRunArgs(value: string | null): readonly string[] | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  const parsed = parseJsonColumn("sandkit_runs", "args", value);
+  if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")) {
+    return parsed;
+  }
+
+  throw corruptionError("sandkit_runs", "args", "expected JSON string array");
+}
+
+function readProviderCommit(value: string | null): unknown {
+  if (value === null) {
+    return undefined;
+  }
+
+  return parseJsonColumn("sandkit_runs", "provider_commit", value);
+}
+
+function toRunRecord(row: SqliteRunRow): RunRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    provider: row.provider,
+    executionTargetId: row.execution_target_id,
+    command: row.command,
+    args: readRunArgs(row.args),
+    status: readRunStatus(row.status),
+    exitCode: row.exit_code ?? undefined,
+    stdout: row.stdout ?? undefined,
+    stderr: row.stderr ?? undefined,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at ?? undefined,
+    policySnapshotId: row.policy_snapshot_id ?? undefined,
+    providerCommit: readProviderCommit(row.provider_commit),
+  };
+}
+
+function createSqliteRunStore(db: Database): RunAdapter {
+  return {
+    async createRun(input: RunCreateInput): Promise<RunRecord> {
+      const now = new Date().toISOString();
+      const id = input.id && input.id.trim().length > 0 ? input.id.trim() : createId("run");
+      const startedAt = input.startedAt ?? now;
+
+      db.query(
+        `
+          INSERT INTO sandkit_runs (
+            id,
+            workspace_id,
+            provider,
+            execution_target_id,
+            command,
+            args,
+            status,
+            policy_snapshot_id,
+            provider_commit,
+            started_at,
+            finished_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+      ).run(
+        id,
+        input.workspaceId,
+        input.provider,
+        input.executionTargetId,
+        input.command,
+        input.args === null || input.args === undefined ? null : toJsonString(input.args),
+        input.status ?? "started",
+        input.policySnapshotId ?? null,
+        null,
+        startedAt,
+        null,
+      );
+
+      return {
+        id,
+        workspaceId: input.workspaceId,
+        provider: input.provider,
+        executionTargetId: input.executionTargetId,
+        command: input.command,
+        args: input.args ?? [],
+        status: input.status ?? "started",
+        startedAt,
+        policySnapshotId: input.policySnapshotId ?? undefined,
+      };
+    },
+    async finishRun(id: string, input: RunFinishInput): Promise<RunRecord> {
+      const current = await getRun(db, id);
+      if (!current) {
+        throw new Error(`Run with id "${id}" does not exist`);
+      }
+
+      const next: RunRecord = {
+        ...current,
+        status: input.status,
+        finishedAt: input.finishedAt,
+        exitCode: input.exitCode ?? current.exitCode,
+        stdout: input.stdout ?? current.stdout,
+        stderr: input.stderr ?? current.stderr,
+        providerCommit: input.providerCommit ?? current.providerCommit,
+      };
+
+      db.query(
+        `
+          UPDATE sandkit_runs
+          SET status = ?,
+              exit_code = ?,
+              stdout = ?,
+              stderr = ?,
+              finished_at = ?,
+              provider_commit = ?
+          WHERE id = ?
+          `,
+      ).run(
+        next.status,
+        next.exitCode ?? null,
+        next.stdout ?? null,
+        next.stderr ?? null,
+        next.finishedAt ?? null,
+        next.providerCommit === undefined ? null : toJsonString(next.providerCommit),
+        id,
+      );
+
+      return next;
+    },
+  };
+}
+
+async function getRun(db: Database, id: string): Promise<RunRecord | null> {
+  const row = db
+    .query<SqliteRunRow, [string]>(
+      `
+      SELECT id,
+             workspace_id,
+             provider,
+             execution_target_id,
+             command,
+             args,
+             status,
+             policy_snapshot_id,
+             provider_commit,
+             exit_code,
+             stdout,
+             stderr,
+             started_at,
+             finished_at
+      FROM sandkit_runs
+      WHERE id = ?
+      LIMIT 1
+      `,
+    )
+    .get(id);
+
+  return row ? toRunRecord(row) : null;
+}
+
+function createPolicySnapshotStore(db: Database): PolicySnapshotAdapter {
+  return {
+    async createPolicySnapshot(input: PolicySnapshotCreateInput): Promise<PolicySnapshotRecord> {
+      const now = new Date().toISOString();
+      const id =
+        input.id && input.id.trim().length > 0 ? input.id.trim() : createId("policy-snapshot");
+
+      db.query(
+        `
+          INSERT INTO sandkit_policies (
+            id,
+            workspace_id,
+            policy_id,
+            config,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?)
+          `,
+      ).run(
+        id,
+        input.workspaceId,
+        input.policyId,
+        toJsonString(input.config),
+        input.createdAt ?? now,
+      );
+
+      return {
+        id,
+        workspaceId: input.workspaceId,
+        policyId: input.policyId,
+        config: input.config,
+        createdAt: input.createdAt ?? now,
+      };
+    },
+  };
 }
 
 class BunSqliteWorkspaceAdapter implements SandkitAdapter {
@@ -39,9 +294,17 @@ class BunSqliteWorkspaceAdapter implements SandkitAdapter {
     };
   }
 
+  get runs() {
+    return createSqliteRunStore(this.#db);
+  }
+
+  get policySnapshots() {
+    return createPolicySnapshotStore(this.#db);
+  }
+
   async createWorkspace(input: WorkspaceCreateInput = {}): Promise<WorkspaceRecord> {
     const now = new Date().toISOString();
-    const id = input.id && input.id.trim().length > 0 ? input.id : crypto.randomUUID();
+    const id = input.id && input.id.trim().length > 0 ? input.id : createId("workspace");
 
     this.#db
       .query(
@@ -149,12 +412,13 @@ class BunSqliteWorkspaceAdapter implements SandkitAdapter {
   }
 
   #toRecord(row: SqliteWorkspaceRow): WorkspaceRecord {
-    let metadata: Record<string, unknown> | undefined;
-    if (row.metadata) {
-      try {
-        metadata = JSON.parse(row.metadata) as Record<string, unknown>;
-      } catch {
-        metadata = undefined;
+    let metadata: WorkspaceMetadata | undefined;
+    if (row.metadata !== null) {
+      const parsed = parseJsonColumn("sandkit_workspaces", "metadata", row.metadata);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        metadata = parsed as WorkspaceMetadata;
+      } else {
+        throw corruptionError("sandkit_workspaces", "metadata", "expected JSON object");
       }
     }
 
@@ -162,7 +426,7 @@ class BunSqliteWorkspaceAdapter implements SandkitAdapter {
       id: row.id,
       name: row.name ?? undefined,
       metadata,
-      status: row.status,
+      status: readWorkspaceStatus(row.status),
       sandboxId: row.sandboxId ?? undefined,
       lastResumedAt: row.lastResumedAt ?? undefined,
       createdAt: row.createdAt,
@@ -181,6 +445,36 @@ class BunSqliteWorkspaceAdapter implements SandkitAdapter {
         lastResumedAt TEXT,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
+      )
+    `);
+    this.#db.run(`
+      CREATE TABLE IF NOT EXISTS sandkit_policies (
+        id TEXT PRIMARY KEY NOT NULL,
+        workspace_id TEXT NOT NULL,
+        policy_id TEXT NOT NULL,
+        config TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES sandkit_workspaces(id)
+      )
+    `);
+    this.#db.run(`
+      CREATE TABLE IF NOT EXISTS sandkit_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        workspace_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        execution_target_id TEXT NOT NULL,
+        command TEXT NOT NULL,
+        args TEXT,
+        status TEXT NOT NULL,
+        policy_snapshot_id TEXT,
+        provider_commit TEXT,
+        exit_code INTEGER,
+        stdout TEXT,
+        stderr TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY(workspace_id) REFERENCES sandkit_workspaces(id),
+        FOREIGN KEY(policy_snapshot_id) REFERENCES sandkit_policies(id)
       )
     `);
   }

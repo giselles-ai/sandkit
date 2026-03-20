@@ -101,7 +101,7 @@ export function renderTextSchema(model: SandkitSchemaModel): string {
 
   const maybeExtras = model.dialect === "sqlite" ? "" : model.dialect === "postgresql" ? "" : "";
 
-  return `// This file is generated from Sandkit schema model.\n// Provider: ${model.dialect}\n// Version: ${1}\n\n${imports[model.dialect]}\n\n${entries}\n\nexport const sandkitSchema = {\n${model.tables
+  return `// This file is generated from Sandkit schema model.\n// Provider: ${model.dialect}\n// Version: ${model.version}\n\n${imports[model.dialect]}\n\n${entries}\n\nexport const sandkitSchema = {\n${model.tables
     .map((table) => {
       const exportName = table.exportName ?? table.name;
       return `  ${exportName},`;

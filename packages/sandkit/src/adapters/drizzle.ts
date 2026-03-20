@@ -1,13 +1,21 @@
 import { eq } from "drizzle-orm";
 import type { SQLWrapper } from "drizzle-orm";
 
-import { sandkitWorkspaceExport } from "../schema/model.ts";
+import { createId } from "../core/ids.ts";
+import { sandkitPolicyExport, sandkitRunExport, sandkitWorkspaceExport } from "../schema/model.ts";
 import type {
   SandkitAdapter,
   WorkspaceCreateInput,
   WorkspaceRecord,
+  WorkspaceMetadata,
   WorkspaceStatus,
   WorkspaceUpdateInput,
+  RunCreateInput,
+  RunFinishInput,
+  RunRecord,
+  PolicySnapshotCreateInput,
+  PolicySnapshotRecord,
+  RunStatus,
 } from "./types.ts";
 
 interface DrizzleWorkspaceTableShape {
@@ -19,6 +27,31 @@ interface DrizzleWorkspaceTableShape {
   readonly lastResumedAt: unknown;
   readonly createdAt: unknown;
   readonly updatedAt: unknown;
+}
+
+interface DrizzleRunTableShape {
+  readonly id: SQLWrapper;
+  readonly workspace_id: unknown;
+  readonly provider: unknown;
+  readonly execution_target_id: unknown;
+  readonly command: unknown;
+  readonly args: unknown;
+  readonly status: unknown;
+  readonly policy_snapshot_id: unknown;
+  readonly provider_commit: unknown;
+  readonly exit_code: unknown;
+  readonly stdout: unknown;
+  readonly stderr: unknown;
+  readonly started_at: unknown;
+  readonly finished_at: unknown;
+}
+
+interface DrizzlePolicySnapshotTableShape {
+  readonly id: SQLWrapper;
+  readonly workspace_id: unknown;
+  readonly policy_id: unknown;
+  readonly config: unknown;
+  readonly created_at: unknown;
 }
 
 interface DrizzleSchemaMap {
@@ -59,16 +92,55 @@ interface DrizzleWorkspaceRow {
   updatedAt: string | number | Date;
 }
 
-export interface DrizzleAdapterOptions<TWorkspaces extends DrizzleWorkspaceTableShape> {
-  provider: "sqlite" | "postgresql" | "mysql";
-  workspaces?: TWorkspaces;
-  id?: string;
+interface DrizzleRunRow {
+  id: string;
+  workspace_id: string;
+  provider: string;
+  execution_target_id: string;
+  command: string;
+  args: string | null;
+  status: string;
+  policy_snapshot_id: string | null;
+  provider_commit: string | null;
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  started_at: string | number | Date;
+  finished_at: string | number | Date | null;
 }
 
 const defaultWorkspaceStatus = "active";
 const defaultWorkspaceName = "default";
+const workspaceStatuses = new Set<WorkspaceStatus>(["active", "inactive", "archived"]);
+const runStatuses = new Set<RunStatus>(["started", "succeeded", "failed"]);
 
-function toRowRecord(workspace: WorkspaceRecord): DrizzleWorkspaceRow {
+function corruptionError(table: string, column: string, reason: string): Error {
+  return new Error(`Sandkit durable state corruption in ${table}.${column}: ${reason}`);
+}
+
+function parseJsonOrThrow(table: string, column: string, value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw corruptionError(table, column, error instanceof Error ? error.message : "invalid JSON");
+  }
+}
+
+function readWorkspaceStatus(value: string): WorkspaceStatus {
+  if (workspaceStatuses.has(value as WorkspaceStatus)) {
+    return value as WorkspaceStatus;
+  }
+  throw corruptionError("sandkit_workspaces", "status", `unexpected value "${value}"`);
+}
+
+function readRunStatus(value: string): RunStatus {
+  if (runStatuses.has(value as RunStatus)) {
+    return value as RunStatus;
+  }
+  throw corruptionError("sandkit_runs", "status", `unexpected value "${value}"`);
+}
+
+function toWorkspaceRow(workspace: WorkspaceRecord): DrizzleWorkspaceRow {
   return {
     id: workspace.id,
     name: workspace.name ?? defaultWorkspaceName,
@@ -86,6 +158,10 @@ function toDriverTimestamp(value: string | number | Date | null): Date | null {
     return null;
   }
 
+  if (typeof value === "string") {
+    return new Date(value);
+  }
+
   return new Date(value);
 }
 
@@ -101,7 +177,7 @@ function toIsoTimestamp(value: string | number | Date): string {
   return value;
 }
 
-function toInsertValues(row: DrizzleWorkspaceRow): Record<string, unknown> {
+function toWorkspaceInsertValues(row: DrizzleWorkspaceRow): Record<string, unknown> {
   return {
     id: row.id,
     name: row.name,
@@ -115,15 +191,16 @@ function toInsertValues(row: DrizzleWorkspaceRow): Record<string, unknown> {
 }
 
 function readMetadata(value: string | null): WorkspaceRecord["metadata"] {
-  if (!value) {
+  if (value === null) {
     return undefined;
   }
 
-  try {
-    return JSON.parse(value) as WorkspaceRecord["metadata"];
-  } catch {
-    return undefined;
+  const parsed = parseJsonOrThrow("sandkit_workspaces", "metadata", value);
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    return parsed as WorkspaceMetadata;
   }
+
+  throw corruptionError("sandkit_workspaces", "metadata", "expected JSON object");
 }
 
 function toWorkspaceRecord(row: DrizzleWorkspaceRow): WorkspaceRecord {
@@ -131,11 +208,71 @@ function toWorkspaceRecord(row: DrizzleWorkspaceRow): WorkspaceRecord {
     id: row.id,
     name: row.name ?? undefined,
     metadata: readMetadata(row.metadata),
-    status: row.status,
+    status: readWorkspaceStatus(row.status),
     sandboxId: row.sandboxId ?? undefined,
     lastResumedAt: row.lastResumedAt === null ? undefined : toIsoTimestamp(row.lastResumedAt),
     createdAt: toIsoTimestamp(row.createdAt),
     updatedAt: toIsoTimestamp(row.updatedAt),
+  };
+}
+
+function readRunArgs(value: string | null): readonly string[] | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  const parsed = parseJsonOrThrow("sandkit_runs", "args", value);
+  if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")) {
+    return parsed;
+  }
+
+  throw corruptionError("sandkit_runs", "args", "expected JSON string array");
+}
+
+function readProviderCommit(value: string | null): unknown {
+  if (value === null) {
+    return undefined;
+  }
+
+  return parseJsonOrThrow("sandkit_runs", "provider_commit", value);
+}
+
+function toRunRecord(row: DrizzleRunRow): RunRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    provider: row.provider,
+    executionTargetId: row.execution_target_id,
+    command: row.command,
+    args: readRunArgs(row.args),
+    status: readRunStatus(row.status),
+    exitCode: row.exit_code ?? undefined,
+    stdout: row.stdout ?? undefined,
+    stderr: row.stderr ?? undefined,
+    startedAt: toIsoTimestamp(row.started_at),
+    finishedAt: row.finished_at === null ? undefined : toIsoTimestamp(row.finished_at),
+    policySnapshotId: row.policy_snapshot_id ?? undefined,
+    providerCommit: readProviderCommit(row.provider_commit),
+  };
+}
+
+function toRunInsertValues(input: RunRecord, workspaceId: string): Record<string, unknown> {
+  return {
+    id: input.id,
+    workspace_id: workspaceId,
+    provider: input.provider,
+    execution_target_id: input.executionTargetId,
+    command: input.command,
+    args: input.args ? JSON.stringify(input.args) : null,
+    status: input.status,
+    policy_snapshot_id: input.policySnapshotId ?? null,
+    provider_commit:
+      input.providerCommit === undefined ? null : JSON.stringify(input.providerCommit),
+    started_at: toDriverTimestamp(input.startedAt),
+    exit_code: input.exitCode ?? null,
+    stdout: input.stdout ?? null,
+    stderr: input.stderr ?? null,
+    finished_at: input.finishedAt ? toDriverTimestamp(input.finishedAt) : null,
   };
 }
 
@@ -154,37 +291,85 @@ async function selectWorkspaceById<TWorkspaces extends DrizzleWorkspaceTableShap
   return row ? toWorkspaceRecord(row) : null;
 }
 
-function resolveWorkspaceTable(
+async function selectRunById<TRuns extends DrizzleRunTableShape>(
   db: DrizzleDatabaseLike,
-  workspaceOverride?: DrizzleWorkspaceTableShape,
-): DrizzleWorkspaceTableShape {
-  if (workspaceOverride) {
-    return workspaceOverride;
+  runs: TRuns,
+  id: string,
+): Promise<RunRecord | null> {
+  const rows = await db
+    .select()
+    .from(runs as object)
+    .where(eq(runs.id, id))
+    .limit(1);
+
+  const row = rows[0] as DrizzleRunRow | undefined;
+  return row ? toRunRecord(row) : null;
+}
+
+function resolveTable<TTable>(
+  db: DrizzleDatabaseLike,
+  override: TTable | undefined,
+  canonicalName: string,
+  fallbackName: string,
+): TTable {
+  if (override) {
+    return override;
   }
 
   const fullSchema = db._?.fullSchema;
   if (!fullSchema) {
     throw new Error(
-      "Sandkit drizzleAdapter requires a Drizzle database with schema metadata to auto-resolve workspaces.",
+      "Sandkit drizzleAdapter requires a Drizzle database with schema metadata to auto-resolve tables.",
     );
   }
 
-  const canonical = fullSchema[sandkitWorkspaceExport];
+  const canonical =
+    fullSchema[canonicalName] ??
+    fullSchema[fallbackName] ??
+    fullSchema[fallbackName.replace("_", "")];
   if (!canonical) {
     throw new Error(
-      `Sandkit drizzleAdapter could not find "${sandkitWorkspaceExport}" in drizzle schema. ` +
-        `Generate schema with Sandkit defaults and pass the canonical workspace table as \`workspaces\`.`,
+      `Sandkit drizzleAdapter could not find "${canonicalName}" in drizzle schema. ` +
+        `Generate schema with Sandkit defaults and pass the canonical table explicitly if auto-resolution fails.`,
     );
   }
 
-  return canonical as DrizzleWorkspaceTableShape;
+  return canonical as TTable;
 }
 
-export function drizzleAdapter<TWorkspaces extends DrizzleWorkspaceTableShape>(
+export interface DrizzleAdapterOptions<
+  TWorkspaces extends DrizzleWorkspaceTableShape,
+  TRuns extends DrizzleRunTableShape,
+  TPolicySnapshots extends DrizzlePolicySnapshotTableShape,
+> {
+  provider: "sqlite" | "postgresql" | "mysql";
+  workspaces?: TWorkspaces;
+  runs?: TRuns;
+  policySnapshots?: TPolicySnapshots;
+  id?: string;
+}
+
+export function drizzleAdapter<
+  TWorkspaces extends DrizzleWorkspaceTableShape,
+  TRuns extends DrizzleRunTableShape,
+  TPolicySnapshots extends DrizzlePolicySnapshotTableShape,
+>(
   db: DrizzleDatabaseLike,
-  options: DrizzleAdapterOptions<TWorkspaces>,
+  options: DrizzleAdapterOptions<TWorkspaces, TRuns, TPolicySnapshots>,
 ): SandkitAdapter {
-  const resolvedWorkspaces = resolveWorkspaceTable(db, options.workspaces);
+  const resolvedWorkspaces = resolveTable(
+    db,
+    options.workspaces,
+    sandkitWorkspaceExport,
+    "sandkit_workspaces",
+  );
+  const resolvedRuns = resolveTable(db, options.runs, sandkitRunExport, "sandkit_runs");
+  const resolvedPolicySnapshots = resolveTable(
+    db,
+    options.policySnapshots,
+    sandkitPolicyExport,
+    "sandkit_policies",
+  );
   const adapterId = options.id ?? `drizzle-${options.provider}`;
 
   return {
@@ -192,7 +377,7 @@ export function drizzleAdapter<TWorkspaces extends DrizzleWorkspaceTableShape>(
     workspaces: {
       async createWorkspace(input: WorkspaceCreateInput = {}) {
         const now = new Date().toISOString();
-        const id = input.id?.trim() ? input.id.trim() : crypto.randomUUID();
+        const id = input.id?.trim() ? input.id.trim() : createId("workspace");
 
         const workspace: WorkspaceRecord = {
           id,
@@ -207,7 +392,7 @@ export function drizzleAdapter<TWorkspaces extends DrizzleWorkspaceTableShape>(
 
         await db
           .insert(resolvedWorkspaces as object)
-          .values(toInsertValues(toRowRecord(workspace)));
+          .values(toWorkspaceInsertValues(toWorkspaceRow(workspace)));
         return workspace;
       },
 
@@ -247,15 +432,98 @@ export function drizzleAdapter<TWorkspaces extends DrizzleWorkspaceTableShape>(
             metadata: next.metadata ? JSON.stringify(next.metadata) : null,
             status: next.status,
             sandboxId: next.sandboxId ?? null,
-            lastResumedAt: next.lastResumedAt ?? null,
-            updatedAt: next.updatedAt,
+            lastResumedAt: toDriverTimestamp(next.lastResumedAt ?? null),
+            updatedAt: toDriverTimestamp(next.updatedAt),
           })
           .where(eq(resolvedWorkspaces.id, id));
 
         return next;
       },
     },
+    runs: {
+      async createRun(input: RunCreateInput): Promise<RunRecord> {
+        const now = new Date().toISOString();
+        const id = input.id?.trim() ? input.id.trim() : createId("run");
+        const run: RunRecord = {
+          id,
+          workspaceId: input.workspaceId,
+          provider: input.provider,
+          executionTargetId: input.executionTargetId,
+          command: input.command,
+          args: input.args ?? [],
+          status: input.status ?? "started",
+          startedAt: input.startedAt ?? now,
+          policySnapshotId: input.policySnapshotId ?? undefined,
+          exitCode: undefined,
+          stdout: undefined,
+          stderr: undefined,
+        };
+
+        await db.insert(resolvedRuns as object).values(toRunInsertValues(run, input.workspaceId));
+        return run;
+      },
+
+      async finishRun(id: string, input: RunFinishInput): Promise<RunRecord> {
+        const current = await selectRunById(db, resolvedRuns, id);
+        if (!current) {
+          throw new Error(`Run with id "${id}" does not exist`);
+        }
+
+        const next: RunRecord = {
+          ...current,
+          status: input.status,
+          finishedAt: input.finishedAt,
+          exitCode: input.exitCode ?? current.exitCode,
+          stdout: input.stdout ?? current.stdout,
+          stderr: input.stderr ?? current.stderr,
+          providerCommit: input.providerCommit ?? current.providerCommit,
+        };
+
+        await db
+          .update(resolvedRuns as object)
+          .set({
+            status: next.status,
+            exit_code: next.exitCode ?? null,
+            stdout: next.stdout ?? null,
+            stderr: next.stderr ?? null,
+            finished_at: toDriverTimestamp(next.finishedAt ?? null),
+            provider_commit:
+              next.providerCommit === undefined ? null : JSON.stringify(next.providerCommit),
+          })
+          .where(eq((resolvedRuns as DrizzleRunTableShape).id, id));
+
+        return next;
+      },
+    },
+    policySnapshots: {
+      async createPolicySnapshot(input: PolicySnapshotCreateInput): Promise<PolicySnapshotRecord> {
+        const now = new Date().toISOString();
+        const id = input.id?.trim() ? input.id.trim() : createId("policy-snapshot");
+        const createdAt = input.createdAt ?? now;
+        const record: Omit<PolicySnapshotRecord, "id"> & { id: string } = {
+          id,
+          workspaceId: input.workspaceId,
+          policyId: input.policyId,
+          config: input.config,
+          createdAt,
+        };
+
+        await db.insert(resolvedPolicySnapshots as object).values({
+          id,
+          workspace_id: record.workspaceId,
+          policy_id: record.policyId,
+          config: JSON.stringify(record.config),
+          created_at: toDriverTimestamp(createdAt),
+        });
+
+        return {
+          ...record,
+          id,
+        };
+      },
+    },
   };
 }
 
 export type DrizzleWorkspaceTable = DrizzleWorkspaceTableShape;
+export type DrizzleRunTable = DrizzleRunTableShape;

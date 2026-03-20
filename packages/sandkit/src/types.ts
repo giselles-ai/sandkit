@@ -1,4 +1,14 @@
 import type { SandkitAdapter, WorkspaceCreateInput, WorkspaceRecord } from "./adapters/types.ts";
+import type {
+  PolicySnapshotAdapter,
+  PolicySnapshotRecord,
+  PolicySnapshotCreateInput,
+  RunAdapter,
+  RunCreateInput,
+  RunFinishInput,
+  RunRecord,
+  RunStatus,
+} from "./adapters/types.ts";
 import type { NetworkPolicy } from "./policies/types.ts";
 
 export type JsonPrimitive = boolean | number | string | null;
@@ -10,7 +20,19 @@ export type JsonValue =
       [key: string]: JsonValue;
     };
 
-export type { SandkitAdapter, WorkspaceCreateInput, WorkspaceRecord };
+export type {
+  SandkitAdapter,
+  WorkspaceCreateInput,
+  WorkspaceRecord,
+  RunAdapter,
+  RunCreateInput,
+  RunFinishInput,
+  RunRecord,
+  PolicySnapshotAdapter,
+  PolicySnapshotRecord,
+  PolicySnapshotCreateInput,
+  RunStatus,
+};
 export type { NetworkPolicy };
 
 export interface CommandResult {
@@ -27,6 +49,7 @@ export interface PersistedSandboxState {
 
 export interface SandboxDriver {
   readonly id: string;
+  readonly provider: string;
   runCommand(command: string, args: string[]): Promise<CommandResult>;
   snapshot(): Promise<PersistedSandboxState>;
 }

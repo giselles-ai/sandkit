@@ -44,6 +44,8 @@ const baseSchemaName = "sandkit";
 const tablePrefix = "sandkit_";
 
 export const sandkitWorkspaceExport = "sandkitWorkspaces";
+export const sandkitRunExport = "sandkitRuns";
+export const sandkitPolicyExport = "sandkitPolicies";
 
 export const sandkitWorkspaceTable: SandkitTable = {
   name: `${tablePrefix}workspaces`,
@@ -85,7 +87,8 @@ export const sandkitWorkspaceTable: SandkitTable = {
 
 export const sandkitRunTable: SandkitTable = {
   name: `${tablePrefix}runs`,
-  comment: "Executed command history and snapshots.",
+  exportName: sandkitRunExport,
+  comment: "Execution facts for unit-of-work runs.",
   columns: [
     {
       name: "id",
@@ -105,7 +108,42 @@ export const sandkitRunTable: SandkitTable = {
       },
     },
     { name: "command", type: "text", nullable: false },
-    { name: "args", type: "json", nullable: true },
+    {
+      name: "args",
+      type: "json",
+      nullable: true,
+      comment: "Arguments for the executed command.",
+    },
+    {
+      name: "provider",
+      type: "text",
+      nullable: false,
+      comment: "Driver identity used for execution (e.g. vercel-sandbox, mock).",
+    },
+    {
+      name: "execution_target_id",
+      type: "text",
+      nullable: false,
+      comment: "Driver execution target used by the command run.",
+    },
+    {
+      name: "status",
+      type: "text",
+      nullable: false,
+      comment: "Unit status.",
+    },
+    {
+      name: "policy_snapshot_id",
+      type: "text",
+      nullable: true,
+      comment: "FK to policy snapshot row.",
+    },
+    {
+      name: "provider_commit",
+      type: "json",
+      nullable: true,
+      comment: "Provider durability metadata at run completion.",
+    },
     { name: "exit_code", type: "integer", nullable: true },
     { name: "stdout", type: "text", nullable: true },
     { name: "stderr", type: "text", nullable: true },
@@ -115,11 +153,13 @@ export const sandkitRunTable: SandkitTable = {
   indexes: [
     { name: "runs_workspace_id_idx", columns: ["workspace_id"] },
     { name: "runs_finished_at_idx", columns: ["finished_at"] },
+    { name: "runs_status_idx", columns: ["status"] },
   ],
 };
 
 export const sandkitPolicyTable: SandkitTable = {
   name: `${tablePrefix}policies`,
+  exportName: sandkitPolicyExport,
   comment: "Network policy snapshots and source of truth.",
   columns: [
     {
@@ -149,7 +189,7 @@ export function createSandkitSchemaModel(dialect: SandkitDialect = "sqlite"): Sa
   const schemaName = dialect === "postgresql" ? `${baseSchemaName}_schema` : baseSchemaName;
   return {
     name: schemaName,
-    version: 1,
+    version: 2,
     dialect,
     tables: [
       {

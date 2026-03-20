@@ -30,6 +30,7 @@ function toSnapshotState(snapshot: PersistedSandboxState): MockSandboxSnapshotSt
 class MockSandboxDriver implements SandboxDriver {
   readonly #files: FileMap;
   readonly id: string;
+  readonly provider = "mock";
 
   constructor(id: string, files: FileMap = {}) {
     this.id = id;

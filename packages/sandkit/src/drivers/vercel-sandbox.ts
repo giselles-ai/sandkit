@@ -25,6 +25,7 @@ export interface VercelSandboxDriverFactoryOptions {
 
 class VercelSandboxDriver implements SandboxDriver {
   readonly #sandbox: Awaited<ReturnType<typeof Sandbox.get>>;
+  readonly provider = "vercel-sandbox";
 
   constructor(sandbox: Awaited<ReturnType<typeof Sandbox.get>>) {
     this.#sandbox = sandbox;
