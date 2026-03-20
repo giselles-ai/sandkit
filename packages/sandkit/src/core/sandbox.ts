@@ -1,13 +1,16 @@
-import type { CommandResult, SandboxDriver } from "../types.ts";
+import type { WorkspacePolicy } from "../policies/types.ts";
+import type { CommandResult, SandboxDriver, SandboxRunCommandOptions } from "../types.ts";
 import { makeSnapshotCommit, type SandboxCommit } from "./workspace-state.ts";
 
 export interface WorkspaceSandboxHandle {
   runCommand(command: string, args: string[]): Promise<CommandResult>;
+  runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
 }
 
 interface RunStartInput {
   readonly command: string;
   readonly args: readonly string[];
+  readonly effectivePolicy: WorkspacePolicy;
   readonly startedAt: string;
 }
 
@@ -27,14 +30,22 @@ interface RunLifecycle {
 }
 
 type CommitHook = (commit: SandboxCommit) => Promise<void>;
+type DefaultPolicyResolver = () => Promise<WorkspacePolicy>;
 
 export class ManagedSandbox {
   readonly #driver: SandboxDriver;
   readonly #onCommit?: CommitHook;
   readonly #runLifecycle?: RunLifecycle;
+  readonly #resolveDefaultPolicy: DefaultPolicyResolver;
 
-  constructor(driver: SandboxDriver, onCommit?: CommitHook, runLifecycle?: RunLifecycle) {
+  constructor(
+    driver: SandboxDriver,
+    resolveDefaultPolicy: DefaultPolicyResolver,
+    onCommit?: CommitHook,
+    runLifecycle?: RunLifecycle,
+  ) {
     this.#driver = driver;
+    this.#resolveDefaultPolicy = resolveDefaultPolicy;
     this.#onCommit = onCommit;
     this.#runLifecycle = runLifecycle;
   }
@@ -43,12 +54,39 @@ export class ManagedSandbox {
     return this.#driver.id;
   }
 
-  async runCommand(command: string, args: string[]): Promise<CommandResult> {
-    this.ensureCommandShape(command, args);
-    return this.runUnitOfWork(command, args, () => this.#driver.runCommand(command, args));
+  async runCommand(command: string, args: string[]): Promise<CommandResult>;
+  async runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  async runCommand(
+    inputOrCommand: string | SandboxRunCommandOptions,
+    args: string[] = [],
+  ): Promise<CommandResult> {
+    const normalized = await this.normalizeRunCommandInput(inputOrCommand, args);
+    this.ensureCommandShape(normalized.command, normalized.args);
+    return this.runUnitOfWork(normalized.command, normalized.args, normalized.policy, () =>
+      this.executeCommand(normalized.command, normalized.args, normalized.policy),
+    );
   }
 
-  private ensureCommandShape(command: string, args: string[]): void {
+  private async normalizeRunCommandInput(
+    inputOrCommand: string | SandboxRunCommandOptions,
+    args: readonly string[],
+  ): Promise<Required<SandboxRunCommandOptions>> {
+    if (typeof inputOrCommand === "string") {
+      return {
+        command: inputOrCommand,
+        args,
+        policy: await this.#resolveDefaultPolicy(),
+      };
+    }
+
+    return {
+      command: inputOrCommand.command,
+      args: inputOrCommand.args ?? [],
+      policy: inputOrCommand.policy ?? (await this.#resolveDefaultPolicy()),
+    };
+  }
+
+  private ensureCommandShape(command: string, args: readonly string[]): void {
     if (!command.trim()) {
       throw new Error("Sandbox command must not be empty.");
     }
@@ -61,10 +99,11 @@ export class ManagedSandbox {
   private async runUnitOfWork(
     command: string,
     args: readonly string[],
+    effectivePolicy: WorkspacePolicy,
     operation: () => Promise<CommandResult>,
   ): Promise<CommandResult> {
     const now = new Date().toISOString();
-    const runId = await this.startRun(command, args, now);
+    const runId = await this.startRun(command, args, effectivePolicy, now);
     let commandError: unknown | undefined;
     let commandResult: CommandResult | undefined;
 
@@ -139,6 +178,7 @@ export class ManagedSandbox {
   private async startRun(
     command: string,
     args: readonly string[],
+    effectivePolicy: WorkspacePolicy,
     at: string,
   ): Promise<string | undefined> {
     if (!this.#runLifecycle?.onRunStart) {
@@ -148,8 +188,18 @@ export class ManagedSandbox {
     return this.#runLifecycle.onRunStart({
       command,
       args,
+      effectivePolicy,
       startedAt: at,
     });
+  }
+
+  private async executeCommand(
+    command: string,
+    args: readonly string[],
+    policy: WorkspacePolicy,
+  ): Promise<CommandResult> {
+    await this.#driver.applyPolicy(policy);
+    return this.#driver.runCommand(command, [...args]);
   }
 
   private async finishRun(input: RunFinishInput): Promise<void> {
@@ -181,8 +231,16 @@ export class LazySandboxHandle implements WorkspaceSandboxHandle {
     this.#resolveSandbox = resolveSandbox;
   }
 
-  async runCommand(command: string, args: string[]): Promise<CommandResult> {
+  async runCommand(command: string, args: string[]): Promise<CommandResult>;
+  async runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  async runCommand(
+    inputOrCommand: string | SandboxRunCommandOptions,
+    args: string[] = [],
+  ): Promise<CommandResult> {
     const sandbox = await this.#resolveSandbox();
-    return sandbox.runCommand(command, args);
+    if (typeof inputOrCommand === "string") {
+      return sandbox.runCommand(inputOrCommand, args);
+    }
+    return sandbox.runCommand(inputOrCommand);
   }
 }

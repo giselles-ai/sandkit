@@ -1,9 +1,12 @@
 import { Sandbox } from "@vercel/sandbox";
+import type { NetworkPolicy as VercelNetworkPolicy } from "@vercel/sandbox";
 
+import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
   CommandResult,
   PersistedSandboxState,
   SandboxDriver,
+  SandboxCreateOptions,
   SandboxDriverFactory,
   WorkspaceRecord,
 } from "../types.ts";
@@ -33,6 +36,10 @@ class VercelSandboxDriver implements SandboxDriver {
 
   get id(): string {
     return this.#sandbox.sandboxId;
+  }
+
+  async applyPolicy(policy: WorkspacePolicy): Promise<void> {
+    await this.#sandbox.updateNetworkPolicy(compileVercelNetworkPolicy(policy));
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult> {
@@ -81,10 +88,14 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
     this.#timeout = options.timeout ?? 60_000;
   }
 
-  async createSandbox(_workspace: WorkspaceRecord): Promise<SandboxDriver> {
+  async createSandbox(
+    _workspace: WorkspaceRecord,
+    options: SandboxCreateOptions,
+  ): Promise<SandboxDriver> {
     const sandbox = await Sandbox.create({
       runtime: this.#runtime,
       timeout: this.#timeout,
+      networkPolicy: compileVercelNetworkPolicy(options.policy),
     });
 
     return new VercelSandboxDriver(sandbox);
@@ -93,6 +104,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
   async resumeSandbox(
     workspace: WorkspaceRecord,
     snapshot: PersistedSandboxState,
+    options: SandboxCreateOptions,
   ): Promise<SandboxDriver> {
     const state = snapshot.state as VercelPersistedState | undefined;
     const snapshotId = state?.snapshotId;
@@ -111,9 +123,29 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
               snapshotId,
             },
             timeout: this.#timeout,
+            networkPolicy: compileVercelNetworkPolicy(options.policy),
           });
 
-    return new VercelSandboxDriver(sandbox);
+    const driver = new VercelSandboxDriver(sandbox);
+    if (snapshotId === undefined || typeof snapshotId !== "string") {
+      await driver.applyPolicy(options.policy);
+    }
+    return driver;
+  }
+}
+
+function compileVercelNetworkPolicy(policy: WorkspacePolicy): VercelNetworkPolicy {
+  switch (policy.mode) {
+    case "allow-all":
+      return "allow-all";
+    case "deny-all":
+      return "deny-all";
+    case "allow-services": {
+      const domains = [...new Set(policy.services.flatMap((service) => service.domains))].sort();
+      return {
+        allow: domains,
+      };
+    }
   }
 }
 

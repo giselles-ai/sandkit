@@ -1,14 +1,17 @@
-import type { NetworkPolicy } from "./types";
+import { allowService } from "./dsl.ts";
+import type { PolicyServiceDescriptor, WorkspacePolicy } from "./types.ts";
 
-const CODEX_HOSTS = ["api.openai.com", "openrouter.ai", "api.openrouter.ai"];
+const CODEX_DOMAINS = ["api.openai.com", "*.openai.com", "openrouter.ai", "*.openrouter.ai"];
 
-export const allowCodex = (): NetworkPolicy => ({
-  id: "allow-codex",
-  name: "allow-codex",
-  description: "Allow outbound requests commonly used by Codex-style clients",
-  records: CODEX_HOSTS.map((host) => ({
-    host,
-    includeSubdomains: true,
-    ports: [80, 443],
-  })),
-});
+export function codex(): PolicyServiceDescriptor {
+  return {
+    id: "codex",
+    name: "Codex",
+    description: "Allow outbound access commonly needed by Codex-style clients.",
+    domains: CODEX_DOMAINS,
+  };
+}
+
+export function allowCodex(): WorkspacePolicy {
+  return allowService(codex());
+}

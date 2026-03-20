@@ -1,0 +1,50 @@
+import type {
+  WorkspaceMetadata,
+  WorkspaceRecord,
+  WorkspaceUpdateInput,
+} from "../adapters/types.ts";
+import {
+  allowAll,
+  describeWorkspacePolicy,
+  parseWorkspacePolicy,
+  serializeWorkspacePolicy,
+} from "../policies/dsl.ts";
+import type { WorkspacePolicy } from "../policies/types.ts";
+
+const WORKSPACE_POLICY_METADATA_KEY = "sandkit:policy";
+
+function corruptionError(reason: string): Error {
+  return new Error(`Sandkit durable state corruption in sandkit_workspaces.metadata: ${reason}`);
+}
+
+export function readWorkspacePolicy(
+  workspace: WorkspaceRecord,
+  fallback: WorkspacePolicy = allowAll(),
+): WorkspacePolicy {
+  const value = workspace.metadata?.[WORKSPACE_POLICY_METADATA_KEY];
+  if (value === undefined) {
+    return fallback;
+  }
+
+  try {
+    return parseWorkspacePolicy(value);
+  } catch (error) {
+    throw corruptionError(error instanceof Error ? error.message : "invalid workspace policy");
+  }
+}
+
+export function asWorkspacePolicyMetadata(policy: WorkspacePolicy): WorkspaceMetadata {
+  return {
+    [WORKSPACE_POLICY_METADATA_KEY]: serializeWorkspacePolicy(policy),
+  };
+}
+
+export function asWorkspacePolicyPatch(policy: WorkspacePolicy): WorkspaceUpdateInput {
+  return {
+    metadata: asWorkspacePolicyMetadata(policy),
+  };
+}
+
+export function describeWorkspacePolicyId(policy: WorkspacePolicy): string {
+  return describeWorkspacePolicy(policy);
+}

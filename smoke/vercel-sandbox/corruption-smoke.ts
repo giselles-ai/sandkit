@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import {
+  allowAll,
   createMemoryAdapter,
   drizzleAdapter,
   sandkit,
@@ -166,6 +167,9 @@ function createFailingDriverFactory(): SandboxDriverFactory {
       return {
         id: "broken-sandbox",
         provider: "broken-provider",
+        async applyPolicy() {
+          return;
+        },
         async runCommand() {
           throw new Error("command exploded");
         },
@@ -275,6 +279,7 @@ async function runProviderCommitCorruptionScenario(): Promise<void> {
 async function runAggregateFailureScenario(): Promise<void> {
   const app = sandkit({
     database: createMemoryAdapter(),
+    policy: allowAll(),
     sandbox: {
       driverFactory: createFailingDriverFactory(),
     },

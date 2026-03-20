@@ -1,7 +1,10 @@
+import { allowAll, describeWorkspacePolicy } from "../policies/dsl.ts";
+import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
   CommandResult,
   PersistedSandboxState,
   SandboxDriver,
+  SandboxCreateOptions,
   SandboxDriverFactory,
   WorkspaceRecord,
 } from "../types.ts";
@@ -29,12 +32,18 @@ function toSnapshotState(snapshot: PersistedSandboxState): MockSandboxSnapshotSt
 
 class MockSandboxDriver implements SandboxDriver {
   readonly #files: FileMap;
+  #policy: WorkspacePolicy;
   readonly id: string;
   readonly provider = "mock";
 
-  constructor(id: string, files: FileMap = {}) {
+  constructor(id: string, files: FileMap = {}, policy: WorkspacePolicy = allowAll()) {
     this.id = id;
     this.#files = { ...files };
+    this.#policy = policy;
+  }
+
+  async applyPolicy(policy: WorkspacePolicy): Promise<void> {
+    this.#policy = policy;
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult> {
@@ -47,6 +56,10 @@ class MockSandboxDriver implements SandboxDriver {
         return this.ok("/workspace\n");
       case "ls":
         return this.ok(`${Object.keys(this.#files).sort().join("\n")}\n`);
+      case "policy":
+        return this.ok(`${JSON.stringify(this.#policy)}\n`);
+      case "policy-id":
+        return this.ok(`${describeWorkspacePolicy(this.#policy)}\n`);
       default:
         return {
           exitCode: 127,
@@ -118,15 +131,19 @@ class MockSandboxDriver implements SandboxDriver {
 }
 
 export class MockSandboxDriverFactory implements SandboxDriverFactory {
-  async createSandbox(_workspace: WorkspaceRecord): Promise<SandboxDriver> {
-    return new MockSandboxDriver(createId("sandbox"));
+  async createSandbox(
+    _workspace: WorkspaceRecord,
+    options: SandboxCreateOptions,
+  ): Promise<SandboxDriver> {
+    return new MockSandboxDriver(createId("sandbox"), {}, options.policy);
   }
 
   async resumeSandbox(
     _workspace: WorkspaceRecord,
     snapshot: PersistedSandboxState,
+    options: SandboxCreateOptions,
   ): Promise<SandboxDriver> {
     const state = toSnapshotState(snapshot);
-    return new MockSandboxDriver(snapshot.sessionId, state.files);
+    return new MockSandboxDriver(snapshot.sessionId, state.files, options.policy);
   }
 }

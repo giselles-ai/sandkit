@@ -9,7 +9,7 @@ import type {
   RunRecord,
   RunStatus,
 } from "./adapters/types.ts";
-import type { NetworkPolicy } from "./policies/types.ts";
+import type { WorkspacePolicy } from "./policies/types.ts";
 
 export type JsonPrimitive = boolean | number | string | null;
 
@@ -33,12 +33,18 @@ export type {
   PolicySnapshotCreateInput,
   RunStatus,
 };
-export type { NetworkPolicy };
+export type { WorkspacePolicy };
 
 export interface CommandResult {
   exitCode: number;
   stderr: string;
   stdout: string;
+}
+
+export interface SandboxRunCommandOptions {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly policy?: WorkspacePolicy;
 }
 
 export interface PersistedSandboxState {
@@ -50,21 +56,28 @@ export interface PersistedSandboxState {
 export interface SandboxDriver {
   readonly id: string;
   readonly provider: string;
+  applyPolicy(policy: WorkspacePolicy): Promise<void>;
   runCommand(command: string, args: string[]): Promise<CommandResult>;
   snapshot(): Promise<PersistedSandboxState>;
 }
 
+export interface SandboxCreateOptions {
+  readonly policy: WorkspacePolicy;
+}
+
 export interface SandboxDriverFactory {
-  createSandbox(workspace: WorkspaceRecord): Promise<SandboxDriver>;
+  createSandbox(workspace: WorkspaceRecord, options: SandboxCreateOptions): Promise<SandboxDriver>;
   resumeSandbox(
     workspace: WorkspaceRecord,
     snapshot: PersistedSandboxState,
+    options: SandboxCreateOptions,
   ): Promise<SandboxDriver>;
 }
 
 export interface SandkitOptions {
   readonly database?: SandkitAdapter | undefined;
-  readonly network?: NetworkPolicy[] | undefined;
+  readonly policy?: WorkspacePolicy | undefined;
+  readonly network?: readonly unknown[] | undefined;
   readonly sandbox?:
     | {
         readonly driverFactory?: SandboxDriverFactory | undefined;

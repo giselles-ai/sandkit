@@ -10,15 +10,14 @@ https://vercel.com/docs/vercel-sandbox/sdk-reference
 // lib/sandkit.ts
 import { sandkit } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { allowCodex } from "sandkit/policies/codex";
-import { allowGemini } from "sandkit/policies/gemini";
+import { allowServices, codex, gemini } from "sandkit";
 import { db } from "@/db";
 
 const sandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
-  network: [allowCodex(), allowGemini()],
+  policy: allowServices([codex(), gemini()]),
 });
 ```
 
@@ -28,7 +27,10 @@ import { sandkit } from "@/lib/sandkit";
 
 export async function POST() {
   const workspace = await sandkit.createWorkspace();
-  await workspace.sandbox.runCommand("sh", ["-lc", "echo 'hello world' > ./hello.txt"]);
+  await workspace.sandbox.runCommand({
+    command: "sh",
+    args: ["-lc", "echo 'hello world' > ./hello.txt"],
+  });
   return new Response(JSON.stringify({ workspaceId: workspace.id }), {
     status: 200,
     headers: {
@@ -45,7 +47,11 @@ import { sandkit } from "@/lib/sandkit";
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const workspace = await sandkit.getWorkspace(id);
-  const result = await workspace.sandbox.runCommand("cat", ["./hello.txt"]);
+  await workspace.setPolicy(allowServices([codex()]));
+  const result = await workspace.sandbox.runCommand({
+    command: "cat",
+    args: ["./hello.txt"],
+  });
   return new Response(JSON.stringify({ output: result.stdout }), {
     status: 200,
     headers: {
@@ -72,7 +78,7 @@ const sandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
-  //... the rest of your config
+  policy: allowServices([codex()]),
 });
 ```
 

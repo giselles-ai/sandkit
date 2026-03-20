@@ -1,14 +1,17 @@
-import type { NetworkPolicy } from "./types";
+import { allowService } from "./dsl.ts";
+import type { PolicyServiceDescriptor, WorkspacePolicy } from "./types.ts";
 
-const GEMINI_HOSTS = ["generativelanguage.googleapis.com", "ai.google.dev", "googleapis.com"];
+const GEMINI_DOMAINS = ["ai.google.dev", "*.ai.google.dev", "generativelanguage.googleapis.com"];
 
-export const allowGemini = (): NetworkPolicy => ({
-  id: "allow-gemini",
-  name: "allow-gemini",
-  description: "Allow outbound requests commonly used by Gemini clients",
-  records: GEMINI_HOSTS.map((host) => ({
-    host,
-    includeSubdomains: true,
-    ports: [80, 443],
-  })),
-});
+export function gemini(): PolicyServiceDescriptor {
+  return {
+    id: "gemini",
+    name: "Gemini",
+    description: "Allow outbound access commonly needed by Gemini clients.",
+    domains: GEMINI_DOMAINS,
+  };
+}
+
+export function allowGemini(): WorkspacePolicy {
+  return allowService(gemini());
+}

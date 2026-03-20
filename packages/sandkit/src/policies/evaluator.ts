@@ -1,4 +1,4 @@
-import type { NetworkPolicy, NetworkPolicyDecision, NetworkPolicyRecord } from "./types";
+import type { PolicyServiceDescriptor, WorkspacePolicy, WorkspacePolicyDecision } from "./types";
 
 const parseTarget = (target: string | URL) => {
   if (typeof target === "string") {
@@ -12,49 +12,29 @@ const parseTarget = (target: string | URL) => {
   return target;
 };
 
-const normalizeHostname = (hostname: string) => hostname.toLowerCase().replace(/\.+$/, "");
+const normalizeHostname = (hostname: string) =>
+  hostname.toLowerCase().replace(/^\*\./, "").replace(/\.+$/, "");
 
-const portsMatch = (record: NetworkPolicyRecord, urlPort: string, protocol: string) => {
-  if (!record.ports || record.ports.length === 0) {
-    return true;
-  }
-  const targetPort = urlPort === "" ? (protocol === "http:" ? 80 : 443) : Number(urlPort);
-  return record.ports.includes(targetPort);
-};
-
-const pathMatch = (record: NetworkPolicyRecord, pathname: string) => {
-  if (!record.pathPrefix) {
-    return true;
-  }
-  return pathname.startsWith(record.pathPrefix);
-};
-
-const hostMatch = (record: NetworkPolicyRecord, targetHost: string) => {
-  const expected = normalizeHostname(record.host);
+const domainMatches = (domain: string, targetHost: string) => {
+  const expected = normalizeHostname(domain);
   const normalizedTarget = normalizeHostname(targetHost);
-  if (record.includeSubdomains) {
-    return normalizedTarget === expected || normalizedTarget.endsWith(`.${expected}`);
+  if (domain.startsWith("*.")) {
+    return normalizedTarget.endsWith(`.${expected}`);
   }
   return normalizedTarget === expected;
 };
 
-const evaluateRecord = (record: NetworkPolicyRecord, url: URL) => {
+const evaluateService = (service: PolicyServiceDescriptor, url: URL) => {
   if (!url.hostname) {
     return false;
   }
-  if (!hostMatch(record, url.hostname)) {
-    return false;
-  }
-  if (!pathMatch(record, url.pathname)) {
-    return false;
-  }
-  return portsMatch(record, url.port, url.protocol);
+  return service.domains.some((domain) => domainMatches(domain, url.hostname));
 };
 
-export function evaluateNetworkPolicies(
-  policies: readonly NetworkPolicy[] | undefined,
+export function evaluateWorkspacePolicy(
+  policy: WorkspacePolicy | undefined,
   target: string | URL,
-): NetworkPolicyDecision {
+): WorkspacePolicyDecision {
   let parsedTarget: URL;
   try {
     parsedTarget = parseTarget(target);
@@ -65,29 +45,36 @@ export function evaluateNetworkPolicies(
     };
   }
 
-  if (!policies || policies.length === 0) {
+  if (!policy || policy.mode === "allow-all") {
     return {
       allowed: true,
-      reason: "No policies configured",
+      reason: "Workspace policy allows all outbound traffic",
     };
   }
 
-  for (const policy of policies) {
-    for (const record of policy.records) {
-      if (evaluateRecord(record, parsedTarget)) {
-        return {
-          allowed: true,
-          matchedPolicyId: policy.id,
-          matchedPolicyName: policy.name,
-          matchedRecord: record,
-          reason: `Allowed by ${policy.name} policy`,
-        };
-      }
+  if (policy.mode === "deny-all") {
+    return {
+      allowed: false,
+      reason: "Workspace policy denies all outbound traffic",
+    };
+  }
+
+  for (const service of policy.services) {
+    if (evaluateService(service, parsedTarget)) {
+      return {
+        allowed: true,
+        matchedServiceId: service.id,
+        matchedServiceName: service.name,
+        matchedDomain: service.domains.find((domain) =>
+          domainMatches(domain, parsedTarget.hostname),
+        ),
+        reason: `Allowed by ${service.name} service policy`,
+      };
     }
   }
 
   return {
     allowed: false,
-    reason: "No policy matched target host",
+    reason: "No service descriptor matched target host",
   };
 }

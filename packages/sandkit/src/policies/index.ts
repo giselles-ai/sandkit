@@ -1,4 +1,6 @@
 export * from "./types";
-export { evaluateNetworkPolicies } from "./evaluator";
-export { allowCodex } from "./codex";
-export { allowGemini } from "./gemini";
+export * from "./dsl";
+export { evaluateWorkspacePolicy } from "./evaluator";
+export { github } from "./github";
+export { codex } from "./codex";
+export { gemini } from "./gemini";

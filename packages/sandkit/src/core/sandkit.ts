@@ -1,5 +1,6 @@
 import type { SandkitOptions, WorkspaceCreateInput } from "../types.ts";
 import { createSandkitContext, type SandkitContext } from "./context.ts";
+import { asWorkspacePolicyMetadata } from "./workspace-policy.ts";
 import { type PublicWorkspaceHandle, WorkspaceHandle } from "./workspace.ts";
 
 export class Sandkit {
@@ -14,7 +15,14 @@ export class Sandkit {
   }
 
   async createWorkspace(input: WorkspaceCreateInput = {}): Promise<PublicWorkspaceHandle> {
-    const workspace = await this.#ctx.adapter.workspaces.createWorkspace(input);
+    const policy = input.policy ?? this.#ctx.defaultPolicy;
+    const workspace = await this.#ctx.adapter.workspaces.createWorkspace({
+      ...input,
+      metadata: {
+        ...input.metadata,
+        ...asWorkspacePolicyMetadata(policy),
+      },
+    });
     return new WorkspaceHandle(this.#ctx, workspace);
   }
 

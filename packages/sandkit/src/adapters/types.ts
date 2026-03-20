@@ -1,3 +1,5 @@
+import type { WorkspacePolicy } from "../policies/types.ts";
+
 export type WorkspaceStatus = "active" | "inactive" | "archived";
 export type RunStatus = "started" | "succeeded" | "failed";
 
@@ -20,6 +22,7 @@ export interface WorkspaceCreateInput {
   id?: string;
   name?: string;
   metadata?: WorkspaceMetadata;
+  policy?: WorkspacePolicy;
   status?: WorkspaceStatus;
   sandboxId?: string;
   lastResumedAt?: string;

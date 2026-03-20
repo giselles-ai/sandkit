@@ -1,7 +1,16 @@
-import type { RunFinishInput as AdapterRunFinishInput, WorkspaceRecord } from "../types.ts";
+import type {
+  RunFinishInput as AdapterRunFinishInput,
+  WorkspacePolicy,
+  WorkspaceRecord,
+} from "../types.ts";
 import type { SandkitContext } from "./context.ts";
 import { LazySandboxHandle, ManagedSandbox } from "./sandbox.ts";
 import type { WorkspaceSandboxHandle } from "./sandbox.ts";
+import {
+  readWorkspacePolicy,
+  asWorkspacePolicyPatch,
+  describeWorkspacePolicyId,
+} from "./workspace-policy.ts";
 import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
 import {
   readWorkspaceSandboxState,
@@ -16,6 +25,7 @@ export interface PublicWorkspaceHandle {
   readonly id: string;
   readonly record: WorkspaceRecord;
   readonly sandbox: WorkspaceSandboxHandle;
+  setPolicy(policy: WorkspacePolicy): Promise<void>;
 }
 
 interface RunFinishInput extends AdapterRunFinishInput {
@@ -49,6 +59,17 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     return this.#lazySandbox;
   }
 
+  async setPolicy(policy: WorkspacePolicy): Promise<void> {
+    const latest = await this.resolveLatestWorkspace();
+    void latest;
+    const result = await this.#ctx.adapter.workspaces.updateWorkspace(
+      this.#record.id,
+      asWorkspacePolicyPatch(policy),
+    );
+    this.#record = result;
+    this.#sandboxState = readWorkspaceSandboxState(result);
+  }
+
   /**
    * Internal API. Public callers should use `workspace.sandbox.runCommand(...)`.
    */
@@ -59,13 +80,14 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
 
     return new ManagedSandbox(
       sandbox,
+      async () => this.resolveDefaultPolicy(),
       async (commit: SandboxCommit) => {
         const next = transitionAfterCommandCommit(commit, new Date().toISOString());
         await this.persistSandboxState(next);
       },
       {
         onRunStart: async (input) => {
-          const policySnapshot = await this.createPolicySnapshot();
+          const policySnapshot = await this.createPolicySnapshot(input.effectivePolicy);
           const run = await this.#ctx.adapter.runs.createRun({
             workspaceId: this.#record.id,
             provider: sandbox.provider,
@@ -94,10 +116,11 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   }
 
   private async resolveSandboxDriver(workspace: WorkspaceRecord) {
+    const policy = readWorkspacePolicy(workspace, this.#ctx.defaultPolicy);
     const resumeState = toDriverResumeState(this.#sandboxState);
     return resumeState
-      ? await this.#ctx.driverFactory.resumeSandbox(workspace, resumeState)
-      : await this.#ctx.driverFactory.createSandbox(workspace);
+      ? await this.#ctx.driverFactory.resumeSandbox(workspace, resumeState, { policy })
+      : await this.#ctx.driverFactory.createSandbox(workspace, { policy });
   }
 
   private async persistSandboxState(transition: WorkspaceSandboxTransition): Promise<void> {
@@ -120,21 +143,16 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     return latest;
   }
 
-  private async createPolicySnapshot() {
-    const policyId = this.policySetId();
+  private async createPolicySnapshot(policy: WorkspacePolicy) {
     return this.#ctx.adapter.policySnapshots.createPolicySnapshot({
       workspaceId: this.#record.id,
-      policyId,
-      config: {
-        networkPolicies: this.#ctx.networkPolicies,
-      },
+      policyId: describeWorkspacePolicyId(policy),
+      config: policy,
     });
   }
 
-  private policySetId(): string {
-    if (this.#ctx.networkPolicies.length === 0) {
-      return "default";
-    }
-    return this.#ctx.networkPolicies.map((policy) => policy.id).join(",");
+  private async resolveDefaultPolicy(): Promise<WorkspacePolicy> {
+    const workspace = await this.resolveLatestWorkspace();
+    return readWorkspacePolicy(workspace, this.#ctx.defaultPolicy);
   }
 }

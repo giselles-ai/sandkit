@@ -5,7 +5,8 @@
   "scripts": {
     "smoke": "bun run index.ts",
     "smoke:drizzle": "bun run drizzle-smoke.ts",
-    "smoke:corruption": "bun run corruption-smoke.ts"
+    "smoke:corruption": "bun run corruption-smoke.ts",
+    "smoke:policy": "bun run policy-smoke.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.2",
