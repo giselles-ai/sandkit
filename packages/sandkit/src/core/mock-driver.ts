@@ -2,6 +2,7 @@ import { allowAll, describeWorkspacePolicy } from "../policies/dsl.ts";
 import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
   CommandResult,
+  SandboxSessionLease,
   PersistedSandboxState,
   SandboxDriver,
   SandboxCreateOptions,
@@ -35,15 +36,27 @@ class MockSandboxDriver implements SandboxDriver {
   #policy: WorkspacePolicy;
   readonly id: string;
   readonly provider = "mock";
+  readonly #timeoutMs: number;
 
   constructor(id: string, files: FileMap = {}, policy: WorkspacePolicy = allowAll()) {
     this.id = id;
     this.#files = { ...files };
     this.#policy = policy;
+    this.#timeoutMs = 60_000 * 60;
   }
 
   async applyPolicy(policy: WorkspacePolicy): Promise<void> {
     this.#policy = policy;
+  }
+
+  async getSessionLease(): Promise<SandboxSessionLease> {
+    const observedAt = new Date().toISOString();
+
+    return {
+      sandboxId: this.id,
+      observedAt,
+      expiresAt: new Date(Date.parse(observedAt) + this.#timeoutMs).toISOString(),
+    };
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult> {
@@ -131,11 +144,19 @@ class MockSandboxDriver implements SandboxDriver {
 }
 
 export class MockSandboxDriverFactory implements SandboxDriverFactory {
+  readonly #sessions = new Map<string, MockSandboxDriver>();
+
   async createSandbox(
     _workspace: WorkspaceRecord,
     options: SandboxCreateOptions,
   ): Promise<SandboxDriver> {
-    return new MockSandboxDriver(createId("sandbox"), {}, options.policy);
+    const driver = new MockSandboxDriver(createId("sandbox"), {}, options.policy);
+    this.#sessions.set(driver.id, driver);
+    return driver;
+  }
+
+  isSessionUnavailableError(error: unknown): boolean {
+    return error instanceof Error && error.message.startsWith("Mock sandbox session not found:");
   }
 
   async resumeSandbox(
@@ -143,7 +164,19 @@ export class MockSandboxDriverFactory implements SandboxDriverFactory {
     snapshot: PersistedSandboxState,
     options: SandboxCreateOptions,
   ): Promise<SandboxDriver> {
+    if (snapshot.kind === "sandbox-session") {
+      const existing = this.#sessions.get(snapshot.sessionId);
+      if (!existing) {
+        throw new Error(`Mock sandbox session not found: ${snapshot.sessionId}`);
+      }
+
+      await existing.applyPolicy(options.policy);
+      return existing;
+    }
+
     const state = toSnapshotState(snapshot);
-    return new MockSandboxDriver(snapshot.sessionId, state.files, options.policy);
+    const driver = new MockSandboxDriver(snapshot.sessionId, state.files, options.policy);
+    this.#sessions.set(driver.id, driver);
+    return driver;
   }
 }

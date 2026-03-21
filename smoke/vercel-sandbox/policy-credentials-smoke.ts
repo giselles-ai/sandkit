@@ -6,7 +6,10 @@ import { createBunSqliteAdapter, gemini, github } from "sandkit";
 
 import { compileVercelNetworkPolicy } from "../../packages/sandkit/src/drivers/vercel-network-policy.ts";
 
-function readAuthorizationHeader(policy: ReturnType<typeof compileVercelNetworkPolicy>, domain: string) {
+function readAuthorizationHeader(
+  policy: ReturnType<typeof compileVercelNetworkPolicy>,
+  domain: string,
+) {
   if (typeof policy === "string" || !policy.allow || Array.isArray(policy.allow)) {
     throw new Error("Smoke failed: expected Vercel record-form allow policy");
   }

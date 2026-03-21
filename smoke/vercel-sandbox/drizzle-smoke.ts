@@ -148,7 +148,9 @@ async function runSmoke(): Promise<void> {
     }
 
     const policySnapshots = replaySqlite
-      .query<{ count: number }, [string]>("SELECT COUNT(*) as count FROM sandkit_policies WHERE workspace_id = ?")
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) as count FROM sandkit_policies WHERE workspace_id = ?",
+      )
       .get(workspace.id)?.count;
 
     if (policySnapshots !== 2) {

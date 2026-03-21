@@ -24,7 +24,7 @@ const sandkit = sandkit({
 `codex()` reads `CODEX_API_KEY`, `gemini()` reads `GEMINI_API_KEY`, and `github()` reads `GITHUB_TOKEN` at apply time. For one-off overrides, pass an explicit secret only on the run:
 
 ```ts
-  await workspace.sandbox.runCommand({
+await workspace.sandbox.runCommand({
   command: "node",
   args: ["./script.js"],
   policy: allowServices([codex({ apiKey: process.env.RUN_SCOPED_CODEX_API_KEY! })]),
