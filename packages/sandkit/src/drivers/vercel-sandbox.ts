@@ -31,6 +31,7 @@ interface VercelPersistedState {
 export interface VercelSandboxDriverFactoryOptions {
   runtime?: string;
   timeout?: number;
+  ports?: number[];
 }
 
 class VercelSandboxDriver implements SandboxDriver {
@@ -100,7 +101,16 @@ class VercelSandboxDriver implements SandboxDriver {
   }
 
   async url(port: number): Promise<string> {
-    return this.#sandbox.domain(port);
+    try {
+      return this.#sandbox.domain(port);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("No route for port")) {
+        throw error;
+      }
+
+      const refreshed = await Sandbox.get({ sandboxId: this.#sandbox.sandboxId });
+      return refreshed.domain(port);
+    }
   }
 
   async extendTimeout(durationMs: number): Promise<void> {
@@ -158,10 +168,12 @@ function isVercelCommandHandle(value: unknown): value is VercelCommandHandle {
 class VercelSandboxDriverFactory implements SandboxDriverFactory {
   readonly #runtime: string;
   readonly #timeout: number;
+  readonly #ports?: number[];
 
   constructor(options: VercelSandboxDriverFactoryOptions = {}) {
     this.#runtime = options.runtime ?? "node24";
     this.#timeout = options.timeout ?? 60_000;
+    this.#ports = options.ports;
   }
 
   isSessionUnavailableError(error: unknown): boolean {
@@ -185,6 +197,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
     const sandbox = await Sandbox.create({
       runtime: this.#runtime,
       timeout: this.#timeout,
+      ports: this.#ports,
       networkPolicy: compileVercelNetworkPolicy(options.policy),
     });
 
@@ -213,6 +226,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
               snapshotId,
             },
             timeout: this.#timeout,
+            ports: this.#ports,
             networkPolicy: compileVercelNetworkPolicy(options.policy),
           });
 

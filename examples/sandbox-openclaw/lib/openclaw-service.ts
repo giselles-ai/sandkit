@@ -33,6 +33,7 @@ const OPENCLAW_AGENT_DIR = `${HOME_DIR}/.openclaw-agent`;
 const OPENCLAW_LAUNCHER_PATH = `${OPENCLAW_CONFIG_DIR}/start-openclaw-gateway.sh`;
 const OPENCLAW_CONFIG_PATH = `${OPENCLAW_CONFIG_DIR}/openclaw.json`;
 const OPENCLAW_LOG_PATH = `${OPENCLAW_CONFIG_DIR}/gateway.log`;
+const NODE_BIN_DIR = "/vercel/runtimes/node24/bin";
 const DEFAULT_AI_GATEWAY = "https://ai-gateway.vercel.sh/v1";
 const DEFAULT_AI_MODEL = "openai/gpt-5.4-mini";
 const DEFAULT_INSTALL_SPEC = "openclaw@latest";
@@ -134,7 +135,7 @@ function buildSandboxReadyCommand(sandboxUrl: string): string {
   return `${sandboxUrl}${CONTROL_UI_BOOTSTRAP_PATH}`;
 }
 
-function buildOpenClawConfig(authToken: string): string {
+function buildOpenClawConfig(authToken: string, uiOrigin: string): string {
   const modelRef = `sandbox-gateway/${AI_GATEWAY_MODEL}`;
   const controlUiRoot = `${NPM_PREFIX}/lib/node_modules/openclaw/dist/control-ui`;
 
@@ -159,7 +160,7 @@ function buildOpenClawConfig(authToken: string): string {
         controlUi: {
           enabled: true,
           root: controlUiRoot,
-          allowedOrigins: ["*"],
+          allowedOrigins: [uiOrigin],
           dangerouslyDisableDeviceAuth: true,
         },
         auth: {
@@ -198,6 +199,10 @@ function buildOpenClawConfig(authToken: string): string {
     null,
     2,
   );
+}
+
+function controlUiOrigin(url: string): string {
+  return new URL(url).origin;
 }
 
 async function initializeSchema(database: Client): Promise<void> {
@@ -243,6 +248,158 @@ async function waitForOpenClawReady(url: string): Promise<void> {
   );
 }
 
+async function waitForSessionUrl(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<string> {
+  return withRetry(
+    async () => {
+      return session.url(OPENCLAW_GATEWAY_PORT);
+    },
+    20,
+    700,
+  );
+}
+
+async function writeOpenClawConfigForSession(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+  uiUrl: string,
+): Promise<void> {
+  const tokenResult = await session.exec("bash", [
+    "-lc",
+    `cat '${OPENCLAW_CONFIG_DIR}/auth-token.txt' 2>/dev/null || true`,
+  ]);
+  const authToken = tokenResult.stdout.trim() || randomToken();
+  const openclawConfig = buildOpenClawConfig(authToken, controlUiOrigin(uiUrl));
+  const encodedConfig = Buffer.from(openclawConfig).toString("base64");
+
+  await runCheckedInSession(
+    session,
+    "bash",
+    [
+      "-lc",
+      `printf '%s' '${encodedConfig}' | base64 -d > '${OPENCLAW_CONFIG_PATH}'
+printf '%s' '${authToken}' > '${OPENCLAW_CONFIG_DIR}/auth-token.txt'`,
+    ],
+    "write OpenClaw config",
+  );
+}
+
+async function sessionConfigAllowsOrigin(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+  uiUrl: string,
+): Promise<boolean> {
+  const result = await session.exec("bash", [
+    "-lc",
+    `cat '${OPENCLAW_CONFIG_PATH}' 2>/dev/null || true`,
+  ]);
+  return result.stdout.includes(controlUiOrigin(uiUrl));
+}
+
+async function stopGateway(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<void> {
+  await session.exec("bash", [
+    "-lc",
+    "pkill -f 'openclaw-gateway|openclaw.mjs gateway run|start-openclaw-gateway.sh' || true",
+  ]);
+}
+
+async function readBootstrapStatusWithCommand(workspace: PublicWorkspaceHandle): Promise<boolean> {
+  const result = await workspace.sandbox.runCommand("bash", [
+    "-lc",
+    [
+      `test -x '${NPM_PREFIX}/bin/openclaw'`,
+      `test -f '${OPENCLAW_CONFIG_PATH}'`,
+      `test -x '${OPENCLAW_LAUNCHER_PATH}'`,
+    ].join("\n"),
+  ]);
+
+  return result.exitCode === 0;
+}
+
+async function readBootstrapStatusWithSession(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<boolean> {
+  const result = await session.exec("bash", [
+    "-lc",
+    [
+      `test -x '${NPM_PREFIX}/bin/openclaw'`,
+      `test -f '${OPENCLAW_CONFIG_PATH}'`,
+      `test -x '${OPENCLAW_LAUNCHER_PATH}'`,
+    ].join("\n"),
+  ]);
+
+  return result.exitCode === 0;
+}
+
+async function probeLocalGateway(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<void> {
+  await withRetry(
+    async () => {
+      const result = await session.exec("bash", [
+        "-lc",
+        [
+          "set -euo pipefail",
+          "tmp_headers=$(mktemp)",
+          "tmp_body=$(mktemp)",
+          `curl -sS -D \"$tmp_headers\" -o \"$tmp_body\" 'http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}${CONTROL_UI_BOOTSTRAP_PATH}'`,
+          'body=$(cat "$tmp_body")',
+          'if [ -z "$body" ]; then',
+          "  echo 'local gateway returned empty payload' >&2",
+          "  sed -n '1,20p' \"$tmp_headers\" >&2 || true",
+          "  exit 1",
+          "fi",
+          "printf '%s' \"$body\"",
+        ].join("\n"),
+      ]);
+
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr.trim() || "OpenClaw localhost probe failed.");
+      }
+    },
+    20,
+    700,
+  );
+}
+
+async function isLocalGatewayReady(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<boolean> {
+  try {
+    const result = await session.exec("bash", [
+      "-lc",
+      `curl -sS -o /tmp/openclaw-ready.out 'http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}${CONTROL_UI_BOOTSTRAP_PATH}' && test -s /tmp/openclaw-ready.out`,
+    ]);
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function collectGatewayDiagnostics(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<string> {
+  try {
+    const result = await session.exec("bash", [
+      "-lc",
+      [
+        "set -euo pipefail",
+        "printf '%s\\n' '---PROCESS---'",
+        "ps -ef | grep openclaw | grep -v grep || true",
+        "printf '%s\\n' '---FILES---'",
+        `ls -l '${NPM_PREFIX}/bin/openclaw' '${OPENCLAW_CONFIG_PATH}' '${OPENCLAW_LAUNCHER_PATH}' 2>&1 || true`,
+        "printf '%s\\n' '---LOG---'",
+        `tail -n 120 '${OPENCLAW_LOG_PATH}' 2>&1 || true`,
+      ].join("\n"),
+    ]);
+
+    return [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 async function runChecked(
   workspace: PublicWorkspaceHandle,
   command: string,
@@ -260,25 +417,107 @@ ${result.stderr}`;
   }
 }
 
-async function bootstrapOpenClawInWorkspace(workspace: PublicWorkspaceHandle): Promise<void> {
-  const openclawConfig = buildOpenClawConfig(randomToken());
-  const authToken = (JSON.parse(openclawConfig).gateway.auth.token as string) ?? "";
-  if (!authToken) {
-    throw new Error("Failed to generate OpenClaw auth token.");
+async function runCheckedInSession(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+  command: string,
+  args: string[],
+  label: string,
+) {
+  const result = await session.exec(command, args);
+  if (result.exitCode !== 0) {
+    const message = `${label} failed with exitCode ${result.exitCode}:
+STDOUT:
+${result.stdout}
+STDERR:
+${result.stderr}`;
+    throw new Error(message);
   }
+}
 
-  const controlUiScript = `#!/usr/bin/env bash
+function buildLauncherScript(): string {
+  return `#!/usr/bin/env bash
 set -euo pipefail
 export HOME='${HOME_DIR}'
 export OPENCLAW_AGENT_DIR='${OPENCLAW_AGENT_DIR}'
 export OPENCLAW_CONFIG_PATH='${OPENCLAW_CONFIG_PATH}'
-export PATH='${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'
+export PATH='${NODE_BIN_DIR}:${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'
 
 : > '${OPENCLAW_LOG_PATH}'
 exec '${NPM_PREFIX}/bin/openclaw' gateway run --port ${OPENCLAW_GATEWAY_PORT} >> '${OPENCLAW_LOG_PATH}' 2>&1
 `;
+}
+
+async function writeLauncherScriptInSession(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<void> {
+  const encodedToken = Buffer.from(buildLauncherScript()).toString("base64");
+  await runCheckedInSession(
+    session,
+    "bash",
+    [
+      "-lc",
+      `printf '%s' '${encodedToken}' | base64 -d > '${OPENCLAW_LAUNCHER_PATH}'
+chmod +x '${OPENCLAW_LAUNCHER_PATH}'`,
+    ],
+    "write OpenClaw launcher script",
+  );
+}
+
+async function ensureWorkspaceBootstrapped(workspace: PublicWorkspaceHandle): Promise<void> {
+  if (await readBootstrapStatusWithCommand(workspace)) {
+    return;
+  }
+
+  await bootstrapOpenClawInWorkspace(workspace);
+}
+
+async function ensureSessionBootstrapped(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<void> {
+  const isBootstrapped = await readBootstrapStatusWithSession(session);
+  await writeLauncherScriptInSession(session);
+  if (isBootstrapped) {
+    return;
+  }
+
+  const authTokenResult = await session.exec("bash", [
+    "-lc",
+    `cat '${OPENCLAW_CONFIG_DIR}/auth-token.txt' 2>/dev/null || true`,
+  ]);
+  const authToken = authTokenResult.stdout.trim() || randomToken();
+  const openclawConfig = buildOpenClawConfig(authToken, "http://127.0.0.1");
   const encodedConfig = Buffer.from(openclawConfig).toString("base64");
-  const encodedToken = Buffer.from(controlUiScript).toString("base64");
+  await runCheckedInSession(
+    session,
+    "bash",
+    ["-lc", `mkdir -p '${OPENCLAW_CONFIG_DIR}' '${OPENCLAW_AGENT_DIR}' '${NPM_PREFIX}'`],
+    "prepare sandbox directories",
+  );
+
+  await runCheckedInSession(
+    session,
+    "npm",
+    ["install", "-g", "--prefix", NPM_PREFIX, OPENCLAW_INSTALL_SPEC],
+    "install OpenClaw CLI",
+  );
+
+  await runCheckedInSession(
+    session,
+    "bash",
+    [
+      "-lc",
+      `printf '%s' '${encodedConfig}' | base64 -d > '${OPENCLAW_CONFIG_PATH}'
+printf '%s' '${authToken}' > '${OPENCLAW_CONFIG_DIR}/auth-token.txt'`,
+    ],
+    "write OpenClaw config",
+  );
+}
+
+async function bootstrapOpenClawInWorkspace(workspace: PublicWorkspaceHandle): Promise<void> {
+  const authToken = randomToken();
+  const openclawConfig = buildOpenClawConfig(authToken, "http://127.0.0.1");
+  const encodedConfig = Buffer.from(openclawConfig).toString("base64");
+  const encodedToken = Buffer.from(buildLauncherScript()).toString("base64");
 
   await runChecked(
     workspace,
@@ -326,20 +565,39 @@ function randomToken(): string {
 }
 
 async function ensureGatewayRunning(workspace: PublicWorkspaceHandle): Promise<string> {
-  const lease = await workspace.sandbox.getActiveLease();
-  if (lease) {
-    throw new Error(
-      `Cannot start a new session while one is active for sandbox ${lease.sandboxId}.`,
-    );
+  const existingLease = await workspace.sandbox.getActiveLease();
+  const session = existingLease
+    ? await workspace.sandbox.attachSession()
+    : (await ensureWorkspaceBootstrapped(workspace), await workspace.sandbox.openSession());
+
+  await ensureSessionBootstrapped(session);
+
+  const url = await waitForSessionUrl(session);
+  const hasAllowedOrigin = await sessionConfigAllowsOrigin(session, url);
+  if (!hasAllowedOrigin) {
+    await writeOpenClawConfigForSession(session, url);
+    await stopGateway(session);
   }
 
-  const session = await workspace.sandbox.openSession();
-  const command = await session.startProcess(OPENCLAW_LAUNCHER_PATH, []);
-  void command.wait().catch(() => {
-    /* keep UI active while process exits. readiness check handles failures. */
-  });
+  if (!hasAllowedOrigin || !(await isLocalGatewayReady(session))) {
+    const command = await session.startProcess("bash", ["-lc", OPENCLAW_LAUNCHER_PATH]);
+    void command.wait().catch(() => {
+      /* readiness and diagnostics handle startup failures. */
+    });
 
-  const url = await session.url(OPENCLAW_GATEWAY_PORT);
+    try {
+      await probeLocalGateway(session);
+    } catch (error) {
+      const diagnostics = await collectGatewayDiagnostics(session);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        [message, diagnostics ? `Gateway diagnostics:\n${diagnostics}` : ""]
+          .filter(Boolean)
+          .join("\n\n"),
+      );
+    }
+  }
+
   await waitForOpenClawReady(url);
   return url;
 }
@@ -396,6 +654,7 @@ async function createRuntime(): Promise<Runtime> {
       driverFactory: createVercelSandboxDriverFactory({
         runtime: "node24",
         timeout: parsePositiveMs(SANDBOX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+        ports: [OPENCLAW_GATEWAY_PORT],
       }),
     },
   });
@@ -429,21 +688,28 @@ async function createRuntime(): Promise<Runtime> {
       return null;
     }
 
+    const baseState: Pick<
+      OpenClawState,
+      "hasActiveSession" | "sandboxId" | "remainingMs" | "expiresAt" | "connectCommand"
+    > = {
+      hasActiveSession: true,
+      sandboxId: lease.sandboxId,
+      remainingMs: lease.remainingMs,
+      expiresAt: lease.expiresAt,
+      connectCommand: `sandbox connect ${lease.sandboxId}`,
+    };
+
     try {
       const session = await workspace.sandbox.attachSession();
-      const openclawUrl = await session.url(OPENCLAW_GATEWAY_PORT);
+      const openclawUrl = await waitForSessionUrl(session);
       const token = await readSessionToken(session);
       const uiUrl = token ? `${openclawUrl}#token=${encodeURIComponent(token)}` : openclawUrl;
       return {
-        hasActiveSession: true,
-        sandboxId: lease.sandboxId,
+        ...baseState,
         openclawUrl: uiUrl,
-        remainingMs: formatDurationMs(lease.remainingMs),
-        expiresAt: lease.expiresAt,
-        connectCommand: `sandbox connect ${lease.sandboxId}`,
       };
     } catch {
-      return null;
+      return baseState;
     }
   }
 
