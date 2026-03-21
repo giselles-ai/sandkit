@@ -343,7 +343,7 @@ async function probeLocalGateway(
           "set -euo pipefail",
           "tmp_headers=$(mktemp)",
           "tmp_body=$(mktemp)",
-          `curl -sS -D \"$tmp_headers\" -o \"$tmp_body\" 'http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}${CONTROL_UI_BOOTSTRAP_PATH}'`,
+          `curl -sS -D "$tmp_headers" -o "$tmp_body" 'http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}${CONTROL_UI_BOOTSTRAP_PATH}'`,
           'body=$(cat "$tmp_body")',
           'if [ -z "$body" ]; then',
           "  echo 'local gateway returned empty payload' >&2",
