@@ -9,6 +9,7 @@ import type { WorkspaceSandboxHandle } from "./sandbox.ts";
 import {
   readWorkspacePolicy,
   asWorkspacePolicyPatch,
+  asPolicySnapshotConfig,
   describeWorkspacePolicyId,
 } from "./workspace-policy.ts";
 import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
@@ -147,7 +148,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     return this.#ctx.adapter.policySnapshots.createPolicySnapshot({
       workspaceId: this.#record.id,
       policyId: describeWorkspacePolicyId(policy),
-      config: policy,
+      config: asPolicySnapshotConfig(policy),
     });
   }
 

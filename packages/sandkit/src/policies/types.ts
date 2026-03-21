@@ -3,6 +3,31 @@ export interface PolicyServiceDescriptor {
   readonly name: string;
   readonly description?: string;
   readonly domains: readonly string[];
+  readonly headers?: readonly PolicyServiceHeaderTransform[];
+}
+
+export interface PolicyServiceCredentialDefault {
+  readonly kind: "default";
+}
+
+export interface PolicyServiceCredentialFromValue {
+  readonly kind: "value";
+  readonly value: string;
+}
+
+export interface PolicyServiceCredentialRedacted {
+  readonly kind: "redacted";
+}
+
+export type PolicyServiceCredentialSource =
+  | PolicyServiceCredentialDefault
+  | PolicyServiceCredentialFromValue
+  | PolicyServiceCredentialRedacted;
+
+export interface PolicyServiceHeaderTransform {
+  readonly headerName: string;
+  readonly valuePrefix?: string;
+  readonly credential: PolicyServiceCredentialSource;
 }
 
 export interface WorkspaceAllowAllPolicy {

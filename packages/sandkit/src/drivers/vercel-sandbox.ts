@@ -1,5 +1,4 @@
 import { Sandbox } from "@vercel/sandbox";
-import type { NetworkPolicy as VercelNetworkPolicy } from "@vercel/sandbox";
 
 import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
@@ -10,6 +9,7 @@ import type {
   SandboxDriverFactory,
   WorkspaceRecord,
 } from "../types.ts";
+import { compileVercelNetworkPolicy } from "./vercel-network-policy.ts";
 
 interface VercelCommandFinished {
   exitCode: number;
@@ -131,21 +131,6 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
       await driver.applyPolicy(options.policy);
     }
     return driver;
-  }
-}
-
-function compileVercelNetworkPolicy(policy: WorkspacePolicy): VercelNetworkPolicy {
-  switch (policy.mode) {
-    case "allow-all":
-      return "allow-all";
-    case "deny-all":
-      return "deny-all";
-    case "allow-services": {
-      const domains = [...new Set(policy.services.flatMap((service) => service.domains))].sort();
-      return {
-        allow: domains,
-      };
-    }
   }
 }
 

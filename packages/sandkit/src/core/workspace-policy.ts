@@ -5,8 +5,10 @@ import type {
 } from "../adapters/types.ts";
 import {
   allowAll,
+  assertWorkspacePolicyIsDurable,
   describeWorkspacePolicy,
   parseWorkspacePolicy,
+  redactWorkspacePolicy,
   serializeWorkspacePolicy,
 } from "../policies/dsl.ts";
 import type { WorkspacePolicy } from "../policies/types.ts";
@@ -34,6 +36,7 @@ export function readWorkspacePolicy(
 }
 
 export function asWorkspacePolicyMetadata(policy: WorkspacePolicy): WorkspaceMetadata {
+  assertWorkspacePolicyIsDurable(policy);
   return {
     [WORKSPACE_POLICY_METADATA_KEY]: serializeWorkspacePolicy(policy),
   };
@@ -47,4 +50,8 @@ export function asWorkspacePolicyPatch(policy: WorkspacePolicy): WorkspaceUpdate
 
 export function describeWorkspacePolicyId(policy: WorkspacePolicy): string {
   return describeWorkspacePolicy(policy);
+}
+
+export function asPolicySnapshotConfig(policy: WorkspacePolicy): unknown {
+  return redactWorkspacePolicy(policy);
 }
