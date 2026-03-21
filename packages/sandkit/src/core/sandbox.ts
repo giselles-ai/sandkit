@@ -309,7 +309,7 @@ export class ManagedSession implements WorkspaceSessionHandle {
       throw new Error(`This sandbox provider does not support startProcess().`);
     }
 
-    return startProcess(command, [...args]);
+    return startProcess.call(this.#driver, command, [...args]);
   }
 
   async url(port: number): Promise<string> {
@@ -319,7 +319,7 @@ export class ManagedSession implements WorkspaceSessionHandle {
       throw new Error(`This sandbox provider does not support url(port).`);
     }
 
-    return url(port);
+    return url.call(this.#driver, port);
   }
 
   async extendTimeout(durationMs: number): Promise<void> {
@@ -329,7 +329,7 @@ export class ManagedSession implements WorkspaceSessionHandle {
       throw new Error(`This sandbox provider does not support extendTimeout().`);
     }
 
-    await extendTimeout(durationMs);
+    await extendTimeout.call(this.#driver, durationMs);
     if (this.#leaseLifecycle?.onLeaseRefresh) {
       await this.#leaseLifecycle.onLeaseRefresh();
     }

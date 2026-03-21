@@ -1,0 +1,191 @@
+:root {
+  --bg-a: #16162b;
+  --bg-b: #2a1b3b;
+  --card: rgba(14, 16, 26, 0.82);
+  --line: rgba(255, 255, 255, 0.16);
+  --text: #eef0ff;
+  --muted: #aeb4d7;
+  --accent: #6ad3ff;
+  --accent-strong: #98ffd8;
+  --warn: #ffb56a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--text);
+  font-family: "Avenir Next", "Segoe UI", "Noto Sans JP", sans-serif;
+  background:
+    radial-gradient(1100px 700px at 8% 12%, var(--bg-b), transparent 55%),
+    radial-gradient(900px 450px at 86% 4%, #2b2a67, transparent 58%),
+    linear-gradient(145deg, #070711 0%, var(--bg-a) 65%, #0d101f 100%);
+}
+
+.grain {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  opacity: 0.22;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.08) 0.4px, transparent 0.4px),
+    radial-gradient(circle at 60% 40%, rgba(255, 255, 255, 0.04) 0.3px, transparent 0.3px);
+  background-size:
+    3px 3px,
+    4px 4px;
+}
+
+.page-root {
+  position: relative;
+  z-index: 1;
+  width: min(960px, 100% - 3rem);
+  margin: 0 auto;
+  padding: 2.5rem 0 3rem;
+  min-height: 100vh;
+  display: grid;
+  gap: 1.25rem;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1.25rem;
+  background: var(--card);
+  backdrop-filter: blur(2px);
+  animation: reveal 250ms ease;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.7rem;
+  letter-spacing: 0.01em;
+}
+
+.subtitle {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.62rem 1rem;
+  color: inherit;
+  background: linear-gradient(165deg, #20264a, #1a1f35);
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease;
+}
+
+.button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(106, 211, 255, 0.75);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button.primary {
+  background: linear-gradient(165deg, #4f53a6, #4d78ff);
+  border-color: rgba(152, 255, 216, 0.3);
+}
+
+.button.warn {
+  background: linear-gradient(165deg, #4e3f16, #a75e28);
+}
+
+.facts {
+  margin: 0.85rem 0 0.4rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.facts dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.facts dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.link {
+  display: inline-block;
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.copy-field {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(6, 8, 15, 0.6);
+  padding: 0.7rem 0.9rem;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.copy-field:hover,
+.copy-field:focus-visible {
+  outline: none;
+  border-color: rgba(106, 211, 255, 0.6);
+}
+
+.status {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+}
+
+.error {
+  margin: 0;
+  color: #ff9aa2;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 680px) {
+  .grid.two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .page-root {
+    width: min(960px, 100% - 1.25rem);
+  }
+}
