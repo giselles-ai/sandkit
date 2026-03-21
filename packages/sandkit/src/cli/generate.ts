@@ -1,4 +1,5 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { createGeneratePayload } from "../schema/generate";
 import { createModelSnapshot } from "../schema/model";
@@ -11,16 +12,17 @@ import type {
 
 function usage() {
   return [
-    "Usage: sandkit generate [--adapter drizzle] [--provider <sqlite|postgresql|mysql>] [--out <file>] [--stdout]",
-    "Example: npx sandkit generate --provider sqlite --stdout",
-    "Example: npx sandkit generate --adapter drizzle --provider sqlite --stdout",
+    "Usage: sandkit generate [--adapter drizzle] [--dialect <sqlite|postgresql|pg>] [--out <file>] [--stdout]",
+    "Example: npx sandkit generate --dialect sqlite --stdout",
+    "Example: npx sandkit generate --adapter drizzle --dialect postgresql --stdout",
     "If --stdout is omitted, output is shown to console by default.",
-    "Default output file: sandkit-schema.<provider>.ts",
+    "Default output file: db/schema/sandkit.ts",
   ].join("\n");
 }
 
 export function parseGenerateArgs(argv: string[]): SandkitGenerateArgs {
   let provider: SandkitGenerateArgs["provider"];
+  let dialect: SandkitGenerateArgs["dialect"];
   let adapter: SandkitGenerateArgs["adapter"];
   let out: string | undefined;
   let stdout = false;
@@ -44,6 +46,15 @@ export function parseGenerateArgs(argv: string[]): SandkitGenerateArgs {
         continue;
       }
       throw new Error(`Invalid provider: ${next}`);
+    }
+    if (arg === "--dialect") {
+      const next = argv[i + 1];
+      if (next === "sqlite" || next === "postgresql" || next === "pg") {
+        dialect = next === "pg" ? "postgresql" : next;
+        i++;
+        continue;
+      }
+      throw new Error(`Invalid dialect: ${next}`);
     }
     if (arg === "--out") {
       const next = argv[i + 1];
@@ -69,6 +80,7 @@ export function parseGenerateArgs(argv: string[]): SandkitGenerateArgs {
 
   return {
     provider,
+    dialect,
     adapter,
     out,
     stdout,
@@ -78,7 +90,11 @@ export function parseGenerateArgs(argv: string[]): SandkitGenerateArgs {
 export function runGenerateCommand(options: SandkitGenerateResolvedArgs): SandkitGenerateResult {
   const snapshot = createModelSnapshot(options.provider);
   const payload = createGeneratePayload(options.provider, snapshot.model);
-  const outputFile = options.out ?? `sandkit-schema.${options.provider}.ts`;
+  const defaultOutputFile =
+    options.adapter === "drizzle" || options.adapter === undefined
+      ? "db/schema/sandkit.ts"
+      : `sandkit-schema.${options.provider}.ts`;
+  const outputFile = options.out ?? defaultOutputFile;
 
   const result: SandkitGenerateResult = {
     command: "generate",
@@ -93,6 +109,7 @@ export function runGenerateCommand(options: SandkitGenerateResolvedArgs): Sandki
   };
 
   if (!options.stdout) {
+    mkdirSync(dirname(outputFile), { recursive: true });
     writeFileSync(outputFile, payload.schemaText, "utf8");
   }
 
@@ -104,13 +121,15 @@ export async function runCliGenerate(argv: string[]): Promise<SandkitGenerateRes
   const discovered = await resolveProviderWithDiscovery({
     provider: options.provider,
     adapter: options.adapter,
+    dialect: options.dialect,
     stdout: false,
     out: options.out,
   });
 
   return runGenerateCommand({
     provider: discovered.provider,
-    adapter: options.adapter,
+    adapter: discovered.adapter,
+    dialect: options.dialect,
     out: options.out,
     stdout: options.stdout,
   });

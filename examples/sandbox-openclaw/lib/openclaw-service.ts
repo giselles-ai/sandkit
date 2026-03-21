@@ -13,7 +13,7 @@ import {
 } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
 
-import { sandkitPolicies, sandkitRuns, sandkitWorkspaces } from "./schema";
+import { sandkitPolicies, sandkitRuns, sandkitWorkspaces } from "../db/schema/sandkit";
 
 export type OpenClawState = {
   hasWorkspace: boolean;
@@ -46,45 +46,6 @@ const DEFAULT_WORKSPACE_ID = "openclaw-production";
 const CONTROL_UI_BOOTSTRAP_PATH = "/__openclaw/control-ui-config.json";
 const EXAMPLE_ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_DIR = join(EXAMPLE_ROOT_DIR, "data");
-
-const sqlCreateWorkspaces = `CREATE TABLE IF NOT EXISTS sandkit_workspaces (
-  id TEXT PRIMARY KEY NOT NULL,
-  name TEXT,
-  metadata TEXT,
-  status TEXT NOT NULL,
-  sandboxId TEXT,
-  lastResumedAt TEXT,
-  createdAt TEXT NOT NULL,
-  updatedAt TEXT NOT NULL
-)`;
-
-const sqlCreatePolicies = `CREATE TABLE IF NOT EXISTS sandkit_policies (
-  id TEXT PRIMARY KEY NOT NULL,
-  workspace_id TEXT NOT NULL,
-  policy_id TEXT NOT NULL,
-  config TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY(workspace_id) REFERENCES sandkit_workspaces(id)
-)`;
-
-const sqlCreateRuns = `CREATE TABLE IF NOT EXISTS sandkit_runs (
-  id TEXT PRIMARY KEY NOT NULL,
-  workspace_id TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  execution_target_id TEXT NOT NULL,
-  command TEXT NOT NULL,
-  args TEXT,
-  status TEXT NOT NULL,
-  policy_snapshot_id TEXT,
-  provider_commit TEXT,
-  exit_code INTEGER,
-  stdout TEXT,
-  stderr TEXT,
-  started_at TEXT NOT NULL,
-  finished_at TEXT,
-  FOREIGN KEY(workspace_id) REFERENCES sandkit_workspaces(id),
-  FOREIGN KEY(policy_snapshot_id) REFERENCES sandkit_policies(id)
-)`;
 
 const WORKSPACE_ID = process.env.OPENCLAW_WORKSPACE_ID ?? DEFAULT_WORKSPACE_ID;
 const OPENCLAW_INSTALL_SPEC = process.env.OPENCLAW_INSTALL_SPEC ?? DEFAULT_INSTALL_SPEC;
@@ -140,21 +101,78 @@ type WorkspaceMetadata = {
   [key: string]: unknown;
 };
 
-function parseWorkspaceMetadata(raw: string | null | undefined): WorkspaceMetadata {
+function isWorkspaceMetadata(value: unknown): value is WorkspaceMetadata {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseWorkspaceMetadata(raw: unknown): WorkspaceMetadata {
   if (!raw) {
     return {};
   }
 
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as WorkspaceMetadata;
+  let parsed = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return {};
     }
-  } catch {
-    return {};
+
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (error) {
+      throw new Error(
+        `Workspace metadata is corrupted: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
-  return {};
+  if (!isWorkspaceMetadata(parsed)) {
+    throw new Error("Workspace metadata is corrupted: expected a JSON object.");
+  }
+
+  return parsed;
+}
+
+const MISSING_SCHEMA_HINT = `Database schema is not initialized.
+Run migration first:
+
+  bun run db:migrate
+
+If this repository already contains a legacy data file, remove it and rerun migration:
+
+  rm -f data/openclaw.sqlite
+`;
+
+const REQUIRED_SCHEMA_TABLES = [
+  "sandkit_workspaces",
+  "sandkit_runs",
+  "sandkit_policies",
+  "__drizzle_migrations",
+] as const;
+
+async function assertSchemaInitialized(sqlite: Client): Promise<void> {
+  const missing: string[] = [];
+
+  try {
+    for (const tableName of REQUIRED_SCHEMA_TABLES) {
+      const result = await sqlite.execute({
+        sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
+        args: [tableName],
+      });
+
+      if (result.rows.length === 0) {
+        missing.push(tableName);
+      }
+    }
+  } catch (error) {
+    throw new Error(
+      `${MISSING_SCHEMA_HINT}Underlying error:\n${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`${MISSING_SCHEMA_HINT}Missing tables: ${missing.join(", ")}`);
+  }
 }
 
 function buildSandboxReadyCommand(sandboxUrl: string): string {
@@ -225,12 +243,6 @@ function buildOpenClawConfig(authToken: string, controlUiOrigin: string): string
     null,
     2,
   );
-}
-
-async function initializeSchema(database: Client): Promise<void> {
-  await database.execute(sqlCreateWorkspaces);
-  await database.execute(sqlCreatePolicies);
-  await database.execute(sqlCreateRuns);
 }
 
 async function withRetry<T>(action: () => Promise<T>, attempts = 6, baseMs = 500): Promise<T> {
@@ -547,7 +559,7 @@ async function createRuntime(): Promise<Runtime> {
   const sqlite = createClient({
     url: `file:${dbPath}`,
   });
-  await initializeSchema(sqlite);
+  await assertSchemaInitialized(sqlite);
 
   const db = drizzle(sqlite, {
     schema: {
@@ -591,10 +603,10 @@ async function createRuntime(): Promise<Runtime> {
     await db
       .update(sandkitWorkspaces)
       .set({
-        metadata: JSON.stringify({
+        metadata: {
           ...metadata,
           [WORKSPACE_BOOTSTRAP_KEY]: ready,
-        }),
+        },
       })
       .where(eq(sandkitWorkspaces.id, workspaceId));
   }

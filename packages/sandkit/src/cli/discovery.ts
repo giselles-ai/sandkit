@@ -251,23 +251,26 @@ export async function resolveProviderWithDiscovery(
   options: SandkitGenerateArgs,
   cwd = process.cwd(),
 ): Promise<DiscoveryHint> {
-  if (options.provider) {
+  const requestedProvider = options.provider ?? options.dialect;
+  const normalizedProvider = requestedProvider === "pg" ? "postgresql" : requestedProvider;
+
+  if (normalizedProvider) {
     if (
-      options.provider !== "sqlite" &&
-      options.provider !== "postgresql" &&
-      options.provider !== "mysql"
+      normalizedProvider !== "sqlite" &&
+      normalizedProvider !== "postgresql" &&
+      normalizedProvider !== "mysql"
     ) {
       throw new Error("Invalid provider. Use one of: sqlite, postgresql, mysql.");
     }
     return {
       adapter: "drizzle",
-      provider: options.provider,
+      provider: normalizedProvider,
       confidence: 1,
       evidence: [
         {
           source: "cli",
-          signal: `Provider explicitly set as ${options.provider}.`,
-          provider: options.provider,
+          signal: `Provider explicitly set as ${normalizedProvider}.`,
+          provider: normalizedProvider,
           score: 100,
         },
       ],
@@ -286,7 +289,7 @@ export async function resolveProviderWithDiscovery(
   if (!isDrizzleProject) {
     throw new Error(
       "Could not detect a drizzle project from this directory. " +
-        "Run inside a Drizzle project and pass --provider/--adapter explicitly if needed.",
+        "Run inside a Drizzle project and pass --dialect/--adapter explicitly if needed.",
     );
   }
 
@@ -303,7 +306,7 @@ export async function resolveProviderWithDiscovery(
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
       "Could not infer database provider confidently. " +
-        "Re-run with --provider <sqlite|postgresql|mysql>.",
+        "Re-run with --dialect <sqlite|postgresql|pg>.",
     );
   }
 

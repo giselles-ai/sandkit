@@ -6,7 +6,7 @@ function buildHelp() {
     "Sandkit CLI",
     "Commands: generate",
     "",
-    "  sandkit generate [--adapter drizzle] [--provider <sqlite|postgresql|mysql>] [--stdout] [--out file]",
+    "  sandkit generate [--adapter drizzle] [--dialect <sqlite|postgresql|pg>] [--stdout] [--out file]",
     "",
     "When --stdout is set, output is returned in memory and printed by caller.",
   ].join("\n");

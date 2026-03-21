@@ -15,7 +15,6 @@ export default defineConfig([
     format: ["esm"],
     target: "esnext",
     dts: true,
-    splitting: true,
     sourcemap: true,
     external: ["drizzle-orm", "@vercel/sandbox"],
   },

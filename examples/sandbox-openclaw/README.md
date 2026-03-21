@@ -19,11 +19,13 @@ In this example, `commit()` is treated as the durable checkpoint that ends the c
 ## Setup
 
 ```bash
-cd /Users/satoshi/.codex/worktrees/921a/sandbox-devkit/packages/sandkit
+cd packages/sandkit
 bun run build
 
-cd /Users/satoshi/.codex/worktrees/921a/sandbox-devkit/examples/sandbox-openclaw
+cd ../examples/sandbox-openclaw
 bun install
+bun run db:generate
+bun run db:migrate
 bun dev
 ```
 
@@ -36,3 +38,20 @@ Required environment variables:
 - `OPENCLAW_GATEWAY_PORT` (default `18789`)
 - `OPENCLAW_WORKSPACE_ID` (optional, defaults `openclaw-production`)
 - `SANDBOX_TIMEOUT_MS` (optional, default `1200000`)
+
+Schema generation and migration:
+
+```bash
+npx sandkit generate --adapter drizzle --dialect sqlite
+bun run db:generate
+bun run db:migrate
+bun run db:reset   # remove legacy sqlite and run migration from scratch
+```
+
+If migration fails with `no such table` or `already exists`, the local DB state is usually out of sync:
+
+```bash
+bun run db:reset
+```
+
+`db:reset` removes `data/openclaw.sqlite` and reruns `db:migrate`.

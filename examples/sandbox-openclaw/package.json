@@ -7,6 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "mkdir -p data && drizzle-kit migrate --config drizzle.config.ts",
+    "db:reset": "rm -f data/openclaw.sqlite && bun run db:migrate",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -20,6 +23,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^24.0.0",
+    "drizzle-kit": "0.31.10",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "typescript": "5.8.3"

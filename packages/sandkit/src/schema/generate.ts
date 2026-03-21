@@ -83,30 +83,30 @@ export function renderTextSchema(model: SandkitSchemaModel): string {
                 exportNameByTable.get(column.references.table) ?? column.references.table
               }.${column.references.field})`
             : "";
-          return `${column.name}: ${mappedType.type}("${column.name}"${optionsSuffix})${required}${defaultValue}${unique}${primary}${ref}`;
+          return `  ${column.name}: ${mappedType.type}("${column.name}"${optionsSuffix})${required}${defaultValue}${unique}${primary}${ref}`;
         })
         .join(",\n");
 
-      const rows = row ? `\n  ${row}\n` : "\n";
+      const rows = row ? `\n${row}\n` : "\n";
       const exportName = table.exportName ?? table.name;
       return `export const ${exportName} = ${tableExpr}${rows}});`;
     })
     .join("\n\n");
 
   const imports = {
-    sqlite: 'import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";',
-    postgresql: 'import { pgTable } from "drizzle-orm/pg-core";',
-    mysql: 'import { mysqlTable } from "drizzle-orm/mysql-core";',
+    sqlite: 'import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";',
+    postgresql:
+      'import { boolean, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";',
+    mysql:
+      'import { boolean, int, json, mysqlTable, text, timestamp } from "drizzle-orm/mysql-core";',
   } as const;
-
-  const maybeExtras = model.dialect === "sqlite" ? "" : model.dialect === "postgresql" ? "" : "";
 
   return `// This file is generated from Sandkit schema model.\n// Provider: ${model.dialect}\n// Version: ${model.version}\n\n${imports[model.dialect]}\n\n${entries}\n\nexport const sandkitSchema = {\n${model.tables
     .map((table) => {
       const exportName = table.exportName ?? table.name;
       return `  ${exportName},`;
     })
-    .join("\n")}\n};\n${maybeExtras}\n`;
+    .join("\n")}\n};\n`;
 }
 
 export function createGeneratePayload(dialect: SandkitDialect, model: SandkitSchemaModel) {

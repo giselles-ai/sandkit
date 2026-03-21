@@ -5,6 +5,7 @@ export type SandkitDialect = "sqlite" | "postgresql" | "mysql";
 
 export interface SandkitGenerateArgs {
   provider?: SandkitDialect;
+  dialect?: SandkitDialect;
   adapter?: SandkitSupportedAdapter;
   out?: string;
   stdout: boolean;
@@ -12,6 +13,7 @@ export interface SandkitGenerateArgs {
 
 export interface SandkitGenerateResolvedArgs {
   provider: SandkitDialect;
+  dialect?: SandkitDialect;
   adapter?: SandkitSupportedAdapter;
   out?: string;
   stdout: boolean;
@@ -20,6 +22,7 @@ export interface SandkitGenerateResolvedArgs {
 export interface SandkitCliOptions {
   command: SandkitCliCommand;
   provider?: SandkitDialect;
+  dialect?: SandkitDialect;
   adapter?: SandkitSupportedAdapter;
   out?: string;
   stdout: boolean;
