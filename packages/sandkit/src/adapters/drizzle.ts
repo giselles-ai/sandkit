@@ -84,7 +84,7 @@ interface DrizzleDatabaseLike {
 interface DrizzleWorkspaceRow {
   id: string;
   name: string | null;
-  metadata: string | null;
+  metadata: unknown;
   status: WorkspaceStatus;
   sandboxId: string | null;
   lastResumedAt: string | number | Date | null;
@@ -98,10 +98,10 @@ interface DrizzleRunRow {
   provider: string;
   execution_target_id: string;
   command: string;
-  args: string | null;
+  args: unknown;
   status: string;
   policy_snapshot_id: string | null;
-  provider_commit: string | null;
+  provider_commit: unknown;
   exit_code: number | null;
   stdout: string | null;
   stderr: string | null;
@@ -124,6 +124,18 @@ function parseJsonOrThrow(table: string, column: string, value: string): unknown
   } catch (error) {
     throw corruptionError(table, column, error instanceof Error ? error.message : "invalid JSON");
   }
+}
+
+function readJsonColumn(table: string, column: string, value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    return parseJsonOrThrow(table, column, value);
+  }
+
+  return value;
 }
 
 function readWorkspaceStatus(value: string): WorkspaceStatus {
@@ -190,12 +202,12 @@ function toWorkspaceInsertValues(row: DrizzleWorkspaceRow): Record<string, unkno
   };
 }
 
-function readMetadata(value: string | null): WorkspaceRecord["metadata"] {
-  if (value === null) {
+function readMetadata(value: unknown): WorkspaceRecord["metadata"] {
+  const parsed = readJsonColumn("sandkit_workspaces", "metadata", value);
+  if (parsed === undefined) {
     return undefined;
   }
 
-  const parsed = parseJsonOrThrow("sandkit_workspaces", "metadata", value);
   if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
     return parsed as WorkspaceMetadata;
   }
@@ -216,12 +228,12 @@ function toWorkspaceRecord(row: DrizzleWorkspaceRow): WorkspaceRecord {
   };
 }
 
-function readRunArgs(value: string | null): readonly string[] | undefined {
-  if (value === null) {
+function readRunArgs(value: unknown): readonly string[] | undefined {
+  const parsed = readJsonColumn("sandkit_runs", "args", value);
+  if (parsed === undefined) {
     return undefined;
   }
 
-  const parsed = parseJsonOrThrow("sandkit_runs", "args", value);
   if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")) {
     return parsed;
   }
@@ -229,12 +241,8 @@ function readRunArgs(value: string | null): readonly string[] | undefined {
   throw corruptionError("sandkit_runs", "args", "expected JSON string array");
 }
 
-function readProviderCommit(value: string | null): unknown {
-  if (value === null) {
-    return undefined;
-  }
-
-  return parseJsonOrThrow("sandkit_runs", "provider_commit", value);
+function readProviderCommit(value: unknown): unknown {
+  return readJsonColumn("sandkit_runs", "provider_commit", value);
 }
 
 function toRunRecord(row: DrizzleRunRow): RunRecord {

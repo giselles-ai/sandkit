@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createClient, type Client } from "@libsql/client";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import {
   sandkit,
@@ -13,18 +13,50 @@ import {
 } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
 
-import { sandkitPolicies, sandkitRuns, sandkitWorkspaces } from "../db/schema/sandkit";
+import {
+  openclawSessions,
+  sandkitPolicies,
+  sandkitRuns,
+  sandkitWorkspaces,
+} from "../db/schema";
 
 export type OpenClawState = {
   hasWorkspace: boolean;
   workspaceId?: string;
   hasActiveSession: boolean;
+  openclawPhase?: OpenClawSessionPhase;
   sandboxId?: string;
   openclawUrl?: string;
   remainingMs?: number;
   expiresAt?: string;
   connectCommand?: string;
 };
+
+type OpenClawSessionPhase =
+  | "bootstrapping"
+  | "bootstrapped"
+  | "starting_gateway"
+  | "ready"
+  | "degraded"
+  | "repairing"
+  | "failed"
+  | "committed";
+
+type OpenClawMetadataSummary = {
+  version: number;
+  phase: OpenClawSessionPhase;
+  activeSessionId: string | null;
+  lastErrorAt: string | null;
+  bootstrapVersion: number | null;
+};
+
+type WorkspaceMetadata = {
+  openclaw?: OpenClawMetadataSummary;
+  [key: string]: unknown;
+};
+
+type OpenClawSessionRecord = typeof openclawSessions.$inferSelect;
+type OpenClawSessionInsert = typeof openclawSessions.$inferInsert;
 
 type ApiAction = "createWorkspace" | "startSession" | "extendSession" | "commitSession";
 
@@ -36,7 +68,7 @@ const OPENCLAW_LAUNCHER_PATH = `${OPENCLAW_CONFIG_DIR}/start-openclaw-gateway.sh
 const OPENCLAW_CONFIG_PATH = `${OPENCLAW_CONFIG_DIR}/openclaw.json`;
 const OPENCLAW_LOG_PATH = `${OPENCLAW_CONFIG_DIR}/gateway.log`;
 const NODE_BIN_DIR = "/vercel/runtimes/node24/bin";
-const WORKSPACE_BOOTSTRAP_KEY = "openclaw_bootstrap_ready";
+const OPENCLAW_SESSION_SCHEMA_VERSION = 1;
 const DEFAULT_AI_GATEWAY = "https://ai-gateway.vercel.sh/v1";
 const DEFAULT_AI_MODEL = "openai/gpt-5.4-mini";
 const DEFAULT_INSTALL_SPEC = "openclaw@latest";
@@ -97,12 +129,71 @@ function formatDurationMs(ms: number): number {
   return parsed;
 }
 
-type WorkspaceMetadata = {
-  [key: string]: unknown;
-};
-
 function isWorkspaceMetadata(value: unknown): value is WorkspaceMetadata {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOpenClawSessionPhase(value: unknown): value is OpenClawSessionPhase {
+  return (
+    value === "bootstrapping" ||
+    value === "bootstrapped" ||
+    value === "starting_gateway" ||
+    value === "ready" ||
+    value === "degraded" ||
+    value === "repairing" ||
+    value === "failed" ||
+    value === "committed"
+  );
+}
+
+function isOpenClawMetadataSummary(value: unknown): value is OpenClawMetadataSummary {
+  if (!isWorkspaceMetadata(value)) {
+    return false;
+  }
+
+  const metadata = value as Record<string, unknown>;
+  const version = metadata.version;
+  if (typeof version !== "number" || !Number.isInteger(version) || version <= 0) {
+    return false;
+  }
+
+  const phase = metadata.phase;
+  if (!isOpenClawSessionPhase(phase)) {
+    return false;
+  }
+
+  const activeSessionId = metadata.activeSessionId;
+  if (typeof activeSessionId !== "string" && activeSessionId !== null) {
+    return false;
+  }
+
+  const lastErrorAt = metadata.lastErrorAt;
+  if (typeof lastErrorAt !== "string" && lastErrorAt !== null) {
+    return false;
+  }
+
+  const bootstrapVersion = metadata.bootstrapVersion;
+  if (typeof bootstrapVersion !== "number" && bootstrapVersion !== null) {
+    return false;
+  }
+
+  return true;
+}
+
+function normalizeOpenClawMetadataSummary(
+  value: WorkspaceMetadata["openclaw"],
+): OpenClawMetadataSummary {
+  if (isOpenClawMetadataSummary(value)) {
+    return value;
+  }
+
+  return {
+    version: OPENCLAW_SESSION_SCHEMA_VERSION,
+    phase: "bootstrapped",
+    activeSessionId: null,
+    lastErrorAt: null,
+    bootstrapVersion: null,
+  };
 }
 
 function parseWorkspaceMetadata(raw: unknown): WorkspaceMetadata {
@@ -133,6 +224,24 @@ function parseWorkspaceMetadata(raw: unknown): WorkspaceMetadata {
   return parsed;
 }
 
+function makeSummary(
+  workspaceMetadata: WorkspaceMetadata,
+  phase: OpenClawSessionPhase,
+  activeSessionId: string | null,
+  lastErrorAt: string | null,
+): WorkspaceMetadata {
+  return {
+    ...workspaceMetadata,
+    openclaw: {
+      version: OPENCLAW_SESSION_SCHEMA_VERSION,
+      phase,
+      activeSessionId,
+      lastErrorAt,
+      bootstrapVersion: 1,
+    },
+  };
+}
+
 const MISSING_SCHEMA_HINT = `Database schema is not initialized.
 Run migration first:
 
@@ -147,6 +256,7 @@ const REQUIRED_SCHEMA_TABLES = [
   "sandkit_workspaces",
   "sandkit_runs",
   "sandkit_policies",
+  "openclaw_sessions",
   "__drizzle_migrations",
 ] as const;
 
@@ -323,6 +433,21 @@ async function readBootstrapStatusWithSession(
   return result.exitCode === 0;
 }
 
+async function readBootstrapStatusInWorkspace(
+  workspace: PublicWorkspaceHandle,
+): Promise<boolean> {
+  const result = await workspace.sandbox.runCommand("bash", [
+    "-lc",
+    [
+      `test -x '${NPM_PREFIX}/bin/openclaw'`,
+      `test -f '${OPENCLAW_CONFIG_PATH}'`,
+      `test -x '${OPENCLAW_LAUNCHER_PATH}'`,
+    ].join("\n"),
+  ]);
+
+  return result.exitCode === 0;
+}
+
 async function probeLocalGateway(
   session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
 ): Promise<void> {
@@ -334,7 +459,7 @@ async function probeLocalGateway(
           "set -euo pipefail",
           "tmp_headers=$(mktemp)",
           "tmp_body=$(mktemp)",
-          `curl -sS -D "$tmp_headers" -o "$tmp_body" 'http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}${CONTROL_UI_BOOTSTRAP_PATH}'`,
+          `curl --connect-timeout 2 --max-time 4 -sS -D "$tmp_headers" -o "$tmp_body" 'http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}${CONTROL_UI_BOOTSTRAP_PATH}'`,
           'body=$(cat "$tmp_body")',
           'if [ -z "$body" ]; then',
           "  echo 'local gateway returned empty payload' >&2",
@@ -352,6 +477,19 @@ async function probeLocalGateway(
     20,
     700,
   );
+}
+
+async function stopGatewayProcess(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<void> {
+  await session.exec("bash", [
+    "-lc",
+    [
+      "set -euo pipefail",
+      `pkill -f "${NPM_PREFIX}/bin/openclaw gateway run" || true`,
+      `pkill -f "${OPENCLAW_LAUNCHER_PATH}" || true`,
+    ].join("\n"),
+  ]);
 }
 
 async function collectGatewayDiagnostics(
@@ -403,6 +541,23 @@ async function updateControlUiConfigForSession(
     "-lc",
     `printf '%s' '${encodedConfig}' | base64 -d > '${OPENCLAW_CONFIG_PATH}'`,
   ]);
+}
+
+async function runCheckedInSession(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+  command: string,
+  args: string[],
+  label: string,
+) {
+  const result = await session.exec(command, args);
+  if (result.exitCode !== 0) {
+    const message = `${label} failed with exitCode ${result.exitCode}:
+STDOUT:
+${result.stdout}
+STDERR:
+${result.stderr}`;
+    throw new Error(message);
+  }
 }
 
 async function runChecked(
@@ -480,41 +635,135 @@ chmod +x '${OPENCLAW_LAUNCHER_PATH}'`,
   );
 }
 
+async function repairOpenClawInSession(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+): Promise<void> {
+  const authToken = randomToken();
+  const openclawConfig = buildOpenClawConfig(authToken, "http://127.0.0.1");
+  const encodedConfig = Buffer.from(openclawConfig).toString("base64");
+  const encodedLauncher = Buffer.from(buildLauncherScript()).toString("base64");
+
+  await runCheckedInSession(
+    session,
+    "bash",
+    ["-lc", `mkdir -p '${OPENCLAW_CONFIG_DIR}' '${OPENCLAW_AGENT_DIR}' '${NPM_PREFIX}'`],
+    "prepare sandbox directories",
+  );
+
+  await runCheckedInSession(
+    session,
+    "npm",
+    ["install", "-g", "--prefix", NPM_PREFIX, OPENCLAW_INSTALL_SPEC],
+    "install OpenClaw CLI",
+  );
+
+  await runCheckedInSession(
+    session,
+    "bash",
+    [
+      "-lc",
+      `printf '%s' '${encodedConfig}' | base64 -d > '${OPENCLAW_CONFIG_PATH}'
+printf '%s' '${authToken}' > '${OPENCLAW_CONFIG_DIR}/auth-token.txt'`,
+    ],
+    "write OpenClaw config",
+  );
+
+  await runCheckedInSession(
+    session,
+    "bash",
+    [
+      "-lc",
+      `printf '%s' '${encodedLauncher}' | base64 -d > '${OPENCLAW_LAUNCHER_PATH}'
+chmod +x '${OPENCLAW_LAUNCHER_PATH}'`,
+    ],
+    "write OpenClaw launcher script",
+  );
+}
+
 function randomToken(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function ensureGatewayRunning(workspace: PublicWorkspaceHandle): Promise<string> {
+type OpenClawSessionUpdate = {
+  phase?: OpenClawSessionPhase;
+  sandbox_id?: string | null;
+  public_url?: string | null;
+  last_healthy_at?: Date | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  updated_at?: Date;
+  finished_at?: Date | null;
+};
+
+type UpdateOpenClawSessionRecord = (
+  sessionId: string,
+  update: OpenClawSessionUpdate,
+) => Promise<void>;
+
+async function ensureGatewayRunning(
+  workspace: PublicWorkspaceHandle,
+  openclawSession: OpenClawSessionRecord,
+  updateSession: UpdateOpenClawSessionRecord,
+): Promise<string> {
   const existingLease = await workspace.sandbox.getActiveLease();
-  const session = existingLease
+  const activeSession = existingLease
     ? await workspace.sandbox.attachSession()
     : await workspace.sandbox.openSession();
 
-  const url = await waitForSessionUrl(session);
-  const bootstrapReady = await readBootstrapStatusWithSession(session);
+  await updateSession(openclawSession.id, {
+    phase: "starting_gateway",
+    error_code: null,
+    error_message: null,
+    updated_at: new Date(),
+  });
+
+  const url = await waitForSessionUrl(activeSession);
+  let bootstrapReady = await readBootstrapStatusWithSession(activeSession);
   if (!bootstrapReady) {
-    throw new Error(
-      "OpenClaw bootstrap artifacts are missing from the workspace. Recreate the workspace to repair this.",
-    );
+    await updateSession(openclawSession.id, {
+      phase: "repairing",
+      error_code: "bootstrap_missing",
+      error_message: "OpenClaw bootstrap artifacts missing; attempting repair.",
+      updated_at: new Date(),
+    });
+    await repairOpenClawInSession(activeSession);
+    bootstrapReady = await readBootstrapStatusWithSession(activeSession);
   }
 
-  await updateControlUiConfigForSession(session, url);
+  if (!bootstrapReady) {
+    await updateSession(openclawSession.id, {
+      phase: "failed",
+      error_code: "bootstrap_missing",
+      error_message: "OpenClaw bootstrap artifacts still missing after repair.",
+      updated_at: new Date(),
+    });
+    throw new Error("OpenClaw bootstrap artifacts are missing from the workspace.");
+  }
+
+  await updateControlUiConfigForSession(activeSession, url);
 
   try {
-    await probeLocalGateway(session);
+    await probeLocalGateway(activeSession);
   } catch {
-    const command = await session.startProcess("bash", ["-lc", OPENCLAW_LAUNCHER_PATH]);
+    await stopGatewayProcess(activeSession);
+    const command = await activeSession.startProcess("bash", ["-lc", OPENCLAW_LAUNCHER_PATH]);
     void command.wait().catch(() => {
       /* readiness and diagnostics handle startup failures. */
     });
 
     try {
-      await probeLocalGateway(session);
+      await probeLocalGateway(activeSession);
     } catch (error) {
-      const diagnostics = await collectGatewayDiagnostics(session);
+      const diagnostics = await collectGatewayDiagnostics(activeSession);
       const message = error instanceof Error ? error.message : String(error);
+      await updateSession(openclawSession.id, {
+        phase: "failed",
+        error_code: "gateway_start_failed",
+        error_message: "Gateway failed to become healthy.",
+        updated_at: new Date(),
+      });
       throw new Error(
         [message, diagnostics ? `Gateway diagnostics:\n${diagnostics}` : ""]
           .filter(Boolean)
@@ -524,6 +773,17 @@ async function ensureGatewayRunning(workspace: PublicWorkspaceHandle): Promise<s
   }
 
   await waitForOpenClawReady(url);
+  const lease = await workspace.sandbox.getActiveLease();
+  await updateSession(openclawSession.id, {
+    phase: "ready",
+    public_url: url,
+    sandbox_id: lease?.sandboxId ?? null,
+    last_healthy_at: new Date(),
+    error_code: null,
+    error_message: null,
+    updated_at: new Date(),
+  });
+
   return url;
 }
 
@@ -566,6 +826,7 @@ async function createRuntime(): Promise<Runtime> {
       sandkitWorkspaces,
       sandkitRuns,
       sandkitPolicies,
+      openclawSessions,
     },
   });
 
@@ -584,6 +845,10 @@ async function createRuntime(): Promise<Runtime> {
     },
   });
 
+  function nowDate(): Date {
+    return new Date();
+  }
+
   async function loadWorkspaceMetadata(workspaceId: string): Promise<WorkspaceMetadata> {
     const rows = await db
       .select({ metadata: sandkitWorkspaces.metadata })
@@ -598,55 +863,212 @@ async function createRuntime(): Promise<Runtime> {
     return parseWorkspaceMetadata(rows[0].metadata);
   }
 
-  async function setWorkspaceBootstrapState(workspaceId: string, ready: boolean): Promise<void> {
+  async function loadOpenClawSummary(workspaceId: string): Promise<OpenClawMetadataSummary> {
     const metadata = await loadWorkspaceMetadata(workspaceId);
+    return normalizeOpenClawMetadataSummary(metadata.openclaw);
+  }
+
+  async function updateOpenClawSummary(
+    workspaceId: string,
+    update: Partial<OpenClawMetadataSummary>,
+  ): Promise<void> {
+    const metadata = await loadWorkspaceMetadata(workspaceId);
+    const current = normalizeOpenClawMetadataSummary(metadata.openclaw);
+    const nextSummary = makeSummary(
+      metadata,
+      update.phase ?? current.phase,
+      update.activeSessionId ?? metadata.openclaw?.activeSessionId ?? null,
+      update.lastErrorAt === undefined ? metadata.openclaw?.lastErrorAt ?? null : update.lastErrorAt,
+    );
+
+    if (update.phase !== undefined) {
+      nextSummary.phase = update.phase;
+    }
+    if (update.activeSessionId !== undefined) {
+      nextSummary.activeSessionId = update.activeSessionId;
+    }
+    if (update.bootstrapVersion !== undefined) {
+      nextSummary.bootstrapVersion = update.bootstrapVersion;
+    }
+    if (update.lastErrorAt !== undefined) {
+      nextSummary.lastErrorAt = update.lastErrorAt;
+    }
+
     await db
       .update(sandkitWorkspaces)
       .set({
-        metadata: {
-          ...metadata,
-          [WORKSPACE_BOOTSTRAP_KEY]: ready,
-        },
+        metadata: nextSummary,
       })
       .where(eq(sandkitWorkspaces.id, workspaceId));
   }
 
-  async function isWorkspaceBootstrapReady(workspaceId: string): Promise<boolean> {
-    const metadata = await loadWorkspaceMetadata(workspaceId);
-    return metadata[WORKSPACE_BOOTSTRAP_KEY] === true;
+  async function updateOpenClawSessionRecord(
+    sessionId: string,
+    update: OpenClawSessionUpdate,
+  ): Promise<void> {
+    await db
+      .update(openclawSessions)
+      .set({
+        ...update,
+        updated_at: update.updated_at ?? nowDate(),
+      })
+      .where(eq(openclawSessions.id, sessionId));
   }
 
-  async function backfillWorkspaceBootstrapState(
-    workspace: PublicWorkspaceHandle,
-  ): Promise<boolean> {
-    const existingLease = await workspace.sandbox.getActiveLease();
-    const session = existingLease
-      ? await workspace.sandbox.attachSession()
-      : await workspace.sandbox.openSession();
-    const bootstrapReady = await readBootstrapStatusWithSession(session);
+  async function createOpenClawSession(
+    workspaceId: string,
+    phase: OpenClawSessionPhase,
+  ): Promise<OpenClawSessionRecord> {
+    const now = nowDate();
+    const sessionId = randomToken();
+    const values: OpenClawSessionInsert = {
+      id: sessionId,
+      workspace_id: workspaceId,
+      sandbox_id: null,
+      phase,
+      install_spec: OPENCLAW_INSTALL_SPEC,
+      public_url: null,
+      last_healthy_at: null,
+      error_code: null,
+      error_message: null,
+      started_at: now,
+      updated_at: now,
+      finished_at: null,
+    };
 
-    if (bootstrapReady) {
-      await setWorkspaceBootstrapState(workspace.id, true);
+    await db.insert(openclawSessions).values(values);
+
+    const rows = await db
+      .select()
+      .from(openclawSessions)
+      .where(eq(openclawSessions.id, sessionId))
+      .limit(1);
+    if (!rows[0]) {
+      throw new Error("Failed to create OpenClaw session record.");
     }
 
-    return bootstrapReady;
+    return rows[0];
   }
 
-  async function assertWorkspaceBootstrapReady(workspaceId: string): Promise<void> {
-    if (await isWorkspaceBootstrapReady(workspaceId)) {
-      return;
+  async function getOpenClawSessionById(sessionId: string): Promise<OpenClawSessionRecord | null> {
+    const rows = await db
+      .select()
+      .from(openclawSessions)
+      .where(eq(openclawSessions.id, sessionId))
+      .limit(1);
+
+    return rows[0] ?? null;
+  }
+
+  async function getLatestOpenClawSession(workspaceId: string): Promise<OpenClawSessionRecord | null> {
+    const rows = await db
+      .select()
+      .from(openclawSessions)
+      .where(eq(openclawSessions.workspace_id, workspaceId))
+      .orderBy(desc(openclawSessions.started_at), desc(openclawSessions.id))
+      .limit(1);
+
+    return rows[0] ?? null;
+  }
+
+  async function getLatestNonCommittedSession(workspaceId: string): Promise<OpenClawSessionRecord | null> {
+    const rows = await db
+      .select()
+      .from(openclawSessions)
+      .where(eq(openclawSessions.workspace_id, workspaceId))
+      .orderBy(desc(openclawSessions.started_at), desc(openclawSessions.id))
+      .limit(10);
+
+    for (const row of rows) {
+      if (row.phase !== "committed") {
+        return row;
+      }
     }
 
-    const workspace = await runtime.getWorkspace(workspaceId);
-    if (workspace && (await backfillWorkspaceBootstrapState(workspace))) {
-      return;
+    return null;
+  }
+
+  const resumablePhases: readonly OpenClawSessionPhase[] = [
+    "bootstrapped",
+    "degraded",
+    "repairing",
+    "ready",
+  ];
+  const isResumablePhase = (phase: string): phase is OpenClawSessionPhase =>
+    isOpenClawSessionPhase(phase) && resumablePhases.includes(phase);
+
+  const toOpenClawSessionPhase = (phase: string): OpenClawSessionPhase =>
+    isOpenClawSessionPhase(phase) ? phase : "failed";
+
+  async function getOrCreateActiveSession(workspaceId: string): Promise<OpenClawSessionRecord> {
+    const latest = await getLatestOpenClawSession(workspaceId);
+    if (!latest) {
+      return createOpenClawSession(workspaceId, "bootstrapping");
     }
 
-    if (!(await isWorkspaceBootstrapReady(workspaceId))) {
-      throw new Error(
-        "OpenClaw workspace bootstrap is incomplete. Recreate this workspace to re-run durable bootstrap.",
-      );
+    if (latest.phase === "bootstrapping") {
+      await updateOpenClawSessionRecord(latest.id, {
+        phase: "failed",
+        error_code: "stale_bootstrap",
+        error_message: "Previous bootstrap session was incomplete.",
+        updated_at: nowDate(),
+      });
     }
+
+    if (isResumablePhase(latest.phase)) {
+      return latest;
+    }
+
+    return createOpenClawSession(workspaceId, "bootstrapping");
+  }
+
+  async function bootstrapSessionRecord(session: OpenClawSessionRecord): Promise<boolean> {
+    const workspace = await workspaceOrThrow();
+    await bootstrapOpenClawInWorkspace(workspace);
+    const bootstrapReady = await readBootstrapStatusInWorkspace(workspace);
+
+    if (!bootstrapReady) {
+      await updateOpenClawSessionRecord(session.id, {
+        phase: "failed",
+        error_code: "bootstrap_failed",
+        error_message: "OpenClaw bootstrap artifacts missing after install.",
+        updated_at: nowDate(),
+      });
+      return false;
+    }
+
+    await updateOpenClawSessionRecord(session.id, {
+      phase: "bootstrapped",
+      error_code: null,
+      error_message: null,
+      updated_at: nowDate(),
+    });
+    return true;
+  }
+
+  function isErrorCapable(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  async function markSessionFailure(
+    workspaceId: string,
+    session: OpenClawSessionRecord,
+    reason: string,
+  ): Promise<void> {
+    const timestamp = nowDate();
+    const message = isErrorCapable(reason);
+    await updateOpenClawSessionRecord(session.id, {
+      phase: "failed",
+      error_code: "transition_failed",
+      error_message: message,
+      updated_at: timestamp,
+    });
+    await updateOpenClawSummary(workspaceId, {
+      phase: "failed",
+      activeSessionId: session.id,
+      lastErrorAt: timestamp.toISOString(),
+    });
+    throw new Error(message);
   }
 
   async function loadWorkspace(): Promise<PublicWorkspaceHandle | null> {
@@ -724,11 +1146,13 @@ async function createRuntime(): Promise<Runtime> {
       };
     }
 
+    const metadataSummary = await loadOpenClawSummary(workspace.id);
     const workspaceState = await extractActiveSessionInfo(workspace);
     if (workspaceState) {
       return {
         hasWorkspace: true,
         workspaceId: workspace.id,
+        openclawPhase: metadataSummary.phase,
         ...workspaceState,
       };
     }
@@ -736,6 +1160,7 @@ async function createRuntime(): Promise<Runtime> {
     return {
       hasWorkspace: true,
       workspaceId: workspace.id,
+      openclawPhase: metadataSummary.phase,
       hasActiveSession: false,
     };
   }
@@ -747,15 +1172,62 @@ async function createRuntime(): Promise<Runtime> {
     }
 
     const workspace = await runtime.createWorkspace({ id: WORKSPACE_ID, name: "openclaw-demo" });
-    await bootstrapOpenClawInWorkspace(workspace);
-    await setWorkspaceBootstrapState(workspace.id, true);
+    const session = await createOpenClawSession(workspace.id, "bootstrapping");
+    await updateOpenClawSummary(workspace.id, {
+      phase: "bootstrapping",
+      activeSessionId: session.id,
+      lastErrorAt: null,
+    });
+    const bootstrapped = await bootstrapSessionRecord(session);
+    if (!bootstrapped) {
+      await markSessionFailure(
+        workspace.id,
+        session,
+        "OpenClaw bootstrap artifacts missing after initial bootstrap.",
+      );
+    }
+    await updateOpenClawSummary(workspace.id, {
+      phase: "bootstrapped",
+      activeSessionId: session.id,
+      lastErrorAt: null,
+    });
     return getState();
   }
 
   async function startSession(): Promise<OpenClawState> {
     const workspace = await workspaceOrThrow();
-    await assertWorkspaceBootstrapReady(workspace.id);
-    await ensureGatewayRunning(workspace);
+    let session = await getOrCreateActiveSession(workspace.id);
+    const sessionPhase = toOpenClawSessionPhase(session.phase);
+    await updateOpenClawSummary(workspace.id, {
+      phase: sessionPhase,
+      activeSessionId: session.id,
+      lastErrorAt: null,
+    });
+
+    try {
+      const openclawUrl = await ensureGatewayRunning(workspace, session, updateOpenClawSessionRecord);
+      const isReady = await isOpenClawReady(openclawUrl);
+      if (!isReady) {
+        await updateOpenClawSummary(workspace.id, {
+          phase: "degraded",
+          activeSessionId: session.id,
+          lastErrorAt: new Date().toISOString(),
+        });
+      } else {
+        await updateOpenClawSummary(workspace.id, {
+          phase: "ready",
+          activeSessionId: session.id,
+          lastErrorAt: null,
+        });
+      }
+    } catch (error) {
+      await markSessionFailure(
+        workspace.id,
+        session,
+        `Failed to start OpenClaw session: ${isErrorCapable(error)}`,
+      );
+    }
+
     return getState();
   }
 
@@ -766,15 +1238,49 @@ async function createRuntime(): Promise<Runtime> {
     await withActiveSession(workspace, async (session) => {
       await session.extendTimeout(safeDuration);
     });
+    await updateOpenClawSummary(workspace.id, {
+      phase: "ready",
+      activeSessionId: (await loadOpenClawSummary(workspace.id)).activeSessionId,
+      lastErrorAt: null,
+    });
 
     return getState();
   }
 
   async function commitSession(): Promise<OpenClawState> {
     const workspace = await workspaceOrThrow();
+    const summary = await loadOpenClawSummary(workspace.id);
+    const lease = await workspace.sandbox.getActiveLease();
+
+    if (!lease) {
+      throw new Error("No active session to commit.");
+    }
+
+    const resolvedSession = summary.activeSessionId
+      ? await getOpenClawSessionById(summary.activeSessionId)
+      : null;
+    const activeSession = resolvedSession ?? (await getLatestNonCommittedSession(workspace.id));
+
+    if (!activeSession) {
+      throw new Error("No active OpenClaw session exists to commit.");
+    }
+
     await withActiveSession(workspace, async (session) => {
       await session.commit();
     });
+
+    const finishAt = nowDate();
+    await updateOpenClawSessionRecord(activeSession.id, {
+      phase: "committed",
+      finished_at: finishAt,
+      updated_at: finishAt,
+    });
+    await updateOpenClawSummary(workspace.id, {
+      phase: "committed",
+      activeSessionId: null,
+      lastErrorAt: null,
+    });
+
     return getState();
   }
 

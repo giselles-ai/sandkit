@@ -4,13 +4,9 @@
 
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-type WorkspaceMetadata = {
-  [key: string]: unknown;
-};
-
 export const sandkitWorkspaces = sqliteTable("sandkit_workspaces", {
   id: text("id").notNull().primaryKey(),
-  metadata: text("metadata", { mode: "json" }).$type<WorkspaceMetadata | null>(),
+  metadata: text("metadata", { mode: "json" }),
   sandboxId: text("sandboxId"),
   status: text("status").notNull(),
   name: text("name"),

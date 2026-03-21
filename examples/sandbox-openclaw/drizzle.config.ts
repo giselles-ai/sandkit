@@ -1,6 +1,6 @@
 export default {
   dialect: "sqlite",
-  schema: "./db/schema/sandkit.ts",
+  schema: "./db/schema/index.ts",
   out: "./drizzle",
   dbCredentials: {
     url: "file:./data/openclaw.sqlite",

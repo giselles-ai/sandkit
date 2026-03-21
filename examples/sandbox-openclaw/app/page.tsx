@@ -6,6 +6,7 @@ type OpenClawState = {
   hasWorkspace: boolean;
   workspaceId?: string;
   hasActiveSession: boolean;
+  openclawPhase?: string;
   sandboxId?: string;
   openclawUrl?: string;
   remainingMs?: number;
@@ -133,7 +134,7 @@ export default function Page() {
       <h1 className="title">OpenClaw Control Plane</h1>
       <p className="subtitle">
         One workspace, one durable bootstrap path, one live session for OpenClaw operations. Session
-        start does not repair bootstrap.
+        start revalidates bootstrap and repairs missing OpenClaw artifacts when possible.
       </p>
 
       {!state.hasWorkspace ? (
@@ -161,6 +162,8 @@ export default function Page() {
             </button>
           </div>
           <dl className="facts">
+            <dt>OpenClaw phase</dt>
+            <dd>{state.openclawPhase ?? "unknown"}</dd>
             <dt>Workspace</dt>
             <dd>{state.workspaceId}</dd>
             <dt>Sandbox ID</dt>
