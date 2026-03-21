@@ -8,9 +8,13 @@ A production-oriented sample showing how to run OpenClaw on Vercel Sandbox throu
 - Uses `openSession()` for the live phase where OpenClaw actually runs.
 - Uses `attachSession()`, `extendTimeout()`, and `commit()` from the session handle.
 - Persists Sandkit metadata with `drizzle` + `sqlite`.
+- Rewrites OpenClaw Control UI config during `startSession()` so `allowedOrigins` is the exact public sandbox origin, not `["*"]`.
+- Uses `gateway.controlUi.dangerouslyDisableDeviceAuth=true` so tokenized remote Control UI access works inside the sandbox example. This is a deliberate security downgrade for the example flow.
 
 Note: `Start Session` does not repair missing bootstrap state. If the workspace does not have valid bootstrap state,
 recreate the workspace to repair and bootstrap it again.
+
+In this example, `commit()` is treated as the durable checkpoint that ends the current live session. Provider behavior may differ, but on the current Vercel Sandbox flow the session should be considered finished after commit.
 
 ## Setup
 

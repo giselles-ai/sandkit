@@ -10,16 +10,46 @@
     "README.md"
   ],
   "type": "module",
+  "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./adapters/drizzle": "./dist/adapters/drizzle.js",
-    "./adapters/sqlite-bun": "./dist/adapters/sqlite-bun.js",
-    "./policies/codex": "./dist/policies/codex.js",
-    "./policies/gemini": "./dist/policies/gemini.js",
-    "./schema": "./dist/schema/index.js",
-    "./cli": "./dist/cli/index.js"
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./adapters/drizzle": {
+      "types": "./dist/adapters/drizzle.d.ts",
+      "import": "./dist/adapters/drizzle.js",
+      "default": "./dist/adapters/drizzle.js"
+    },
+    "./adapters/sqlite-bun": {
+      "types": "./dist/adapters/sqlite-bun.d.ts",
+      "import": "./dist/adapters/sqlite-bun.js",
+      "default": "./dist/adapters/sqlite-bun.js"
+    },
+    "./policies/codex": {
+      "types": "./dist/policies/codex.d.ts",
+      "import": "./dist/policies/codex.js",
+      "default": "./dist/policies/codex.js"
+    },
+    "./policies/gemini": {
+      "types": "./dist/policies/gemini.d.ts",
+      "import": "./dist/policies/gemini.js",
+      "default": "./dist/policies/gemini.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/schema/index.js",
+      "default": "./dist/schema/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js",
+      "default": "./dist/cli/index.js"
+    }
   },
   "scripts": {
     "lint": "oxlint src tsup.config.ts",

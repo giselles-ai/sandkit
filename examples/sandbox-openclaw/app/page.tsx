@@ -1,6 +1,5 @@
 "use client";
 
-import type { MouseEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
 
 type OpenClawState = {
@@ -175,20 +174,25 @@ export default function Page() {
           {state.hasActiveSession ? (
             <>
               <div className="row">
-                <a
-                  className="link button primary"
-                  href={state.openclawUrl ?? "#"}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-disabled={!state.openclawUrl}
-                  onClick={(event: MouseEvent<HTMLAnchorElement>) => {
-                    if (!state.openclawUrl) {
-                      event.preventDefault();
-                    }
-                  }}
-                >
-                  Open OpenClaw UI
-                </a>
+                {state.openclawUrl ? (
+                  <a
+                    className="link button primary"
+                    href={state.openclawUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open OpenClaw UI
+                  </a>
+                ) : (
+                  <button
+                    className="button primary"
+                    type="button"
+                    disabled={busy === "startSession"}
+                    onClick={() => void runAction("startSession")}
+                  >
+                    {busy === "startSession" ? "Repairing..." : "Repair OpenClaw UI"}
+                  </button>
+                )}
                 <button
                   className="button"
                   type="button"
@@ -214,6 +218,12 @@ export default function Page() {
                   {busy === "commitSession" ? "Committing..." : "Commit and end session"}
                 </button>
               </div>
+              {!state.openclawUrl ? (
+                <p className="status">
+                  Active sandbox session found, but the public OpenClaw UI is not healthy. Repairing
+                  restarts the gateway inside the current session.
+                </p>
+              ) : null}
               <CopyCommand value={state.connectCommand ?? `sandbox connect ${state.sandboxId}`} />
             </>
           ) : (

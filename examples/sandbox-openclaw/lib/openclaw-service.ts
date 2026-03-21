@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createClient, type Client } from "@libsql/client";
 import { eq } from "drizzle-orm";
@@ -43,6 +44,8 @@ const DEFAULT_PORT = 18_789;
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_WORKSPACE_ID = "openclaw-production";
 const CONTROL_UI_BOOTSTRAP_PATH = "/__openclaw/control-ui-config.json";
+const EXAMPLE_ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const DATA_DIR = join(EXAMPLE_ROOT_DIR, "data");
 
 const sqlCreateWorkspaces = `CREATE TABLE IF NOT EXISTS sandkit_workspaces (
   id TEXT PRIMARY KEY NOT NULL,
@@ -158,7 +161,7 @@ function buildSandboxReadyCommand(sandboxUrl: string): string {
   return `${sandboxUrl}${CONTROL_UI_BOOTSTRAP_PATH}`;
 }
 
-function buildOpenClawConfig(authToken: string): string {
+function buildOpenClawConfig(authToken: string, controlUiOrigin: string): string {
   const modelRef = `sandbox-gateway/${AI_GATEWAY_MODEL}`;
   const controlUiRoot = `${NPM_PREFIX}/lib/node_modules/openclaw/dist/control-ui`;
 
@@ -183,7 +186,7 @@ function buildOpenClawConfig(authToken: string): string {
         controlUi: {
           enabled: true,
           root: controlUiRoot,
-          allowedOrigins: ["*"],
+          allowedOrigins: [controlUiOrigin],
           dangerouslyDisableDeviceAuth: true,
         },
         auth: {
@@ -267,6 +270,20 @@ async function waitForOpenClawReady(url: string): Promise<void> {
   );
 }
 
+async function isOpenClawReady(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(buildSandboxReadyCommand(url), { cache: "no-store" });
+    if (!response.ok) {
+      return false;
+    }
+
+    const text = await response.text();
+    return text.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function waitForSessionUrl(
   session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
 ): Promise<string> {
@@ -348,6 +365,34 @@ async function collectGatewayDiagnostics(
   }
 }
 
+function sandboxOriginFromUrl(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    throw new Error(`OpenClaw session URL is not parseable: ${url}`);
+  }
+}
+
+async function updateControlUiConfigForSession(
+  session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
+  sandboxUrl: string,
+): Promise<void> {
+  const tokenResult = await session.exec("bash", [
+    "-lc",
+    `cat '${OPENCLAW_CONFIG_DIR}/auth-token.txt'`,
+  ]);
+  const authToken = tokenResult.stdout.trim();
+  const controlUiOrigin = sandboxOriginFromUrl(sandboxUrl);
+  const encodedConfig = Buffer.from(buildOpenClawConfig(authToken, controlUiOrigin)).toString(
+    "base64",
+  );
+
+  await session.exec("bash", [
+    "-lc",
+    `printf '%s' '${encodedConfig}' | base64 -d > '${OPENCLAW_CONFIG_PATH}'`,
+  ]);
+}
+
 async function runChecked(
   workspace: PublicWorkspaceHandle,
   command: string,
@@ -380,7 +425,7 @@ exec '${NPM_PREFIX}/bin/openclaw' gateway run --port ${OPENCLAW_GATEWAY_PORT} >>
 
 async function bootstrapOpenClawInWorkspace(workspace: PublicWorkspaceHandle): Promise<void> {
   const authToken = randomToken();
-  const openclawConfig = buildOpenClawConfig(authToken);
+  const openclawConfig = buildOpenClawConfig(authToken, "http://127.0.0.1");
   const encodedConfig = Buffer.from(openclawConfig).toString("base64");
   const encodedToken = Buffer.from(buildLauncherScript()).toString("base64");
 
@@ -443,6 +488,8 @@ async function ensureGatewayRunning(workspace: PublicWorkspaceHandle): Promise<s
     );
   }
 
+  await updateControlUiConfigForSession(session, url);
+
   try {
     await probeLocalGateway(session);
   } catch {
@@ -495,8 +542,8 @@ async function createRuntime(): Promise<Runtime> {
     throw new Error("AI_GATEWAY_API_KEY is required for this example.");
   }
 
-  const dbPath = join(process.cwd(), "data", "openclaw.sqlite");
-  await mkdir(join(process.cwd(), "data"), { recursive: true });
+  const dbPath = join(DATA_DIR, "openclaw.sqlite");
+  await mkdir(DATA_DIR, { recursive: true });
   const sqlite = createClient({
     url: `file:${dbPath}`,
   });
@@ -557,7 +604,32 @@ async function createRuntime(): Promise<Runtime> {
     return metadata[WORKSPACE_BOOTSTRAP_KEY] === true;
   }
 
+  async function backfillWorkspaceBootstrapState(
+    workspace: PublicWorkspaceHandle,
+  ): Promise<boolean> {
+    const existingLease = await workspace.sandbox.getActiveLease();
+    const session = existingLease
+      ? await workspace.sandbox.attachSession()
+      : await workspace.sandbox.openSession();
+    const bootstrapReady = await readBootstrapStatusWithSession(session);
+
+    if (bootstrapReady) {
+      await setWorkspaceBootstrapState(workspace.id, true);
+    }
+
+    return bootstrapReady;
+  }
+
   async function assertWorkspaceBootstrapReady(workspaceId: string): Promise<void> {
+    if (await isWorkspaceBootstrapReady(workspaceId)) {
+      return;
+    }
+
+    const workspace = await runtime.getWorkspace(workspaceId);
+    if (workspace && (await backfillWorkspaceBootstrapState(workspace))) {
+      return;
+    }
+
     if (!(await isWorkspaceBootstrapReady(workspaceId))) {
       throw new Error(
         "OpenClaw workspace bootstrap is incomplete. Recreate this workspace to re-run durable bootstrap.",
@@ -608,6 +680,10 @@ async function createRuntime(): Promise<Runtime> {
     try {
       const session = await workspace.sandbox.attachSession();
       const openclawUrl = await waitForSessionUrl(session);
+      if (!(await isOpenClawReady(openclawUrl))) {
+        return baseState;
+      }
+
       const token = await readSessionToken(session);
       const uiUrl = token ? `${openclawUrl}#token=${encodeURIComponent(token)}` : openclawUrl;
       return {
