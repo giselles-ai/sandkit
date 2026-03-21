@@ -3,10 +3,14 @@
 A production-oriented sample showing how to run OpenClaw on Vercel Sandbox through Sandkit.
 
 - Creates a single OpenClaw workspace once.
-- Keeps sandbox bootstrapping in durable `runCommand()` calls.
+- Keeps sandbox bootstrapping in durable `runCommand()` commands.
+- Persists durable bootstrap completion state in workspace metadata.
 - Uses `openSession()` for the live phase where OpenClaw actually runs.
 - Uses `attachSession()`, `extendTimeout()`, and `commit()` from the session handle.
 - Persists Sandkit metadata with `drizzle` + `sqlite`.
+
+Note: `Start Session` does not repair missing bootstrap state. If the workspace does not have valid bootstrap state,
+recreate the workspace to repair and bootstrap it again.
 
 ## Setup
 

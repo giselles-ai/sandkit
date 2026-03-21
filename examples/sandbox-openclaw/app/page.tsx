@@ -133,14 +133,15 @@ export default function Page() {
     <section className="panel">
       <h1 className="title">OpenClaw Control Plane</h1>
       <p className="subtitle">
-        One workspace, one durable bootstrap path, one live session for OpenClaw operations.
+        One workspace, one durable bootstrap path, one live session for OpenClaw operations. Session
+        start does not repair bootstrap.
       </p>
 
       {!state.hasWorkspace ? (
         <section className="grid">
           <p className="status">
-            Workspace is not created yet. This will run durable bootstrap commands (`runCommand`)
-            and install OpenClaw into Vercel Sandbox.
+            Workspace is not created yet. This runs durable bootstrap in `runCommand` and installs
+            OpenClaw into Vercel Sandbox.
           </p>
           <div className="row">
             <button
@@ -210,7 +211,7 @@ export default function Page() {
                   disabled={busy === "commitSession"}
                   onClick={() => void runAction("commitSession")}
                 >
-                  {busy === "commitSession" ? "Committing..." : "Commit"}
+                  {busy === "commitSession" ? "Committing..." : "Commit and end session"}
                 </button>
               </div>
               <CopyCommand value={state.connectCommand ?? `sandbox connect ${state.sandboxId}`} />
