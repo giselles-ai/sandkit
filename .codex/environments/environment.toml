@@ -6,4 +6,5 @@ name = "sandbox-devkit"
 script = '''
 cp "${CODEX_SOURCE_TREE_PATH}/.mise.local.toml" "${CODEX_WORKTREE_PATH}/.mise.local.toml"
 mise trust
+bun install
 '''
