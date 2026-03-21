@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "smoke": "bun run index.ts",
+    "smoke:codex-exec": "bun run codex-exec-smoke.ts",
     "smoke:drizzle": "bun run drizzle-smoke.ts",
     "smoke:corruption": "bun run corruption-smoke.ts",
     "smoke:policy": "bun run policy-smoke.ts",
