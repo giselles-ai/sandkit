@@ -237,11 +237,10 @@ async function runRunArgsCorruptionScenario(corruptedArgs: string, label: string
     const app = sandkit({ database: adapter });
     const workspace = await app.createWorkspace({ name: label });
 
-    await expectErrorContaining(
-      label,
-      () => workspace.sandbox.runCommand("echo", ["hello"]),
-      ["Sandkit durable state corruption", "sandkit_runs.args"],
-    );
+    await expectErrorContaining(label, () => workspace.sandbox.runCommand("echo", ["hello"]), [
+      "Sandkit durable state corruption",
+      "sandkit_runs.args",
+    ]);
   } finally {
     sqlite.close();
     await rm(sqlitePath, { force: true });

@@ -17,7 +17,9 @@ async function runSmoke(): Promise<void> {
   const workspace = await app.createWorkspace({ name: "policy-smoke" });
   const initial = await workspace.sandbox.runCommand({ command: "policy-id" });
   if (initial.stdout.trim() !== "deny-all") {
-    throw new Error(`Smoke failed: expected deny-all default policy, got "${initial.stdout.trim()}"`);
+    throw new Error(
+      `Smoke failed: expected deny-all default policy, got "${initial.stdout.trim()}"`,
+    );
   }
 
   await workspace.setPolicy(allowService(codex()));
