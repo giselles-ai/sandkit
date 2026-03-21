@@ -1,25 +1,36 @@
 import type {
   RunFinishInput as AdapterRunFinishInput,
+  SandboxDriver,
+  SandboxSessionLease,
   WorkspacePolicy,
   WorkspaceRecord,
+  WorkspaceSandboxLease,
 } from "../types.ts";
 import type { SandkitContext } from "./context.ts";
-import { LazySandboxHandle, ManagedSandbox } from "./sandbox.ts";
-import type { WorkspaceSandboxHandle } from "./sandbox.ts";
 import {
-  readWorkspacePolicy,
-  asWorkspacePolicyPatch,
+  LazySandboxHandle,
+  ManagedSandbox,
+  ManagedSession,
+  type WorkspaceSessionHandle,
+  type WorkspaceSandboxHandle,
+} from "./sandbox.ts";
+import {
   asPolicySnapshotConfig,
+  asWorkspacePolicyPatch,
   describeWorkspacePolicyId,
+  readWorkspacePolicy,
 } from "./workspace-policy.ts";
 import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
 import {
-  readWorkspaceSandboxState,
+  isWorkspaceSessionStateExpired,
   persistSandboxTransition,
+  readWorkspaceSandboxLease,
+  readWorkspaceSandboxState,
   toDriverResumeState,
-  type WorkspaceSandboxTransition,
   transitionAfterCommandCommit,
+  transitionToCold,
   transitionToSession,
+  type WorkspaceSandboxTransition,
 } from "./workspace-state.ts";
 
 export interface PublicWorkspaceHandle {
@@ -55,14 +66,19 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
 
   get sandbox(): LazySandboxHandle {
     if (!this.#lazySandbox) {
-      this.#lazySandbox = new LazySandboxHandle(() => this.createOrResumeSandbox());
+      this.#lazySandbox = new LazySandboxHandle(
+        () => this.createOrResumeSandboxForCommand(),
+        () => this.openSession(),
+        () => this.attachSession(),
+        () => this.getActiveLease(),
+      );
     }
+
     return this.#lazySandbox;
   }
 
   async setPolicy(policy: WorkspacePolicy): Promise<void> {
-    const latest = await this.resolveLatestWorkspace();
-    void latest;
+    await this.resolveLatestWorkspace();
     const result = await this.#ctx.adapter.workspaces.updateWorkspace(
       this.#record.id,
       asWorkspacePolicyPatch(policy),
@@ -71,21 +87,31 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     this.#sandboxState = readWorkspaceSandboxState(result);
   }
 
-  /**
-   * Internal API. Public callers should use `workspace.sandbox.runCommand(...)`.
-   */
-  async createOrResumeSandbox(): Promise<ManagedSandbox> {
+  async getActiveLease(): Promise<WorkspaceSandboxLease | null> {
+    await this.resolveLatestWorkspace();
+    const sandbox = await this.resolveAttachableSession();
+    if (!sandbox) {
+      return null;
+    }
+
+    return readWorkspaceSandboxLease(this.#record);
+  }
+
+  async createOrResumeSandboxForCommand(): Promise<ManagedSandbox> {
     const workspace = await this.resolveLatestWorkspace();
+    if (await this.resolveAttachableSession()) {
+      throw new Error(
+        "Cannot run command while a sandbox session is active. Use attachSession() to reuse it or commit the session first.",
+      );
+    }
+
     const sandbox = await this.resolveSandboxDriver(workspace);
-    await this.persistSandboxState(transitionToSession(sandbox.id, new Date().toISOString()));
 
     return new ManagedSandbox(
       sandbox,
       async () => this.resolveDefaultPolicy(),
-      async (commit: SandboxCommit) => {
-        const next = transitionAfterCommandCommit(commit, new Date().toISOString());
-        await this.persistSandboxState(next);
-      },
+      async (commit: SandboxCommit) =>
+        this.persistSandboxState(transitionAfterCommandCommit(commit, new Date().toISOString())),
       {
         onRunStart: async (input) => {
           const policySnapshot = await this.createPolicySnapshot(input.effectivePolicy);
@@ -116,7 +142,90 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     );
   }
 
-  private async resolveSandboxDriver(workspace: WorkspaceRecord) {
+  async openSession(): Promise<WorkspaceSessionHandle> {
+    const workspace = await this.resolveLatestWorkspace();
+    if (await this.resolveAttachableSession()) {
+      throw new Error("A sandbox session is already active for this workspace.");
+    }
+
+    const sandbox = await this.resolveSandboxDriver(workspace);
+    const lease = await sandbox.getSessionLease();
+    await this.persistSandboxState(transitionToSession(sandbox.id, lease));
+
+    return this.makeSession(sandbox);
+  }
+
+  async attachSession(): Promise<WorkspaceSessionHandle> {
+    await this.resolveLatestWorkspace();
+    const sandbox = await this.resolveAttachableSession();
+    if (!sandbox) {
+      throw new Error("There is no active sandbox session to attach for this workspace.");
+    }
+
+    return this.makeSession(sandbox);
+  }
+
+  private makeSession(sandbox: SandboxDriver): ManagedSession {
+    return new ManagedSession(
+      sandbox,
+      async () => this.resolveDefaultPolicy(),
+      async (commit: SandboxCommit) =>
+        this.persistSandboxState(transitionAfterCommandCommit(commit, new Date().toISOString())),
+      {
+        assertActive: async () => {
+          const activeSandbox = await this.resolveAttachableSession();
+          if (!activeSandbox || activeSandbox.id !== sandbox.id) {
+            throw new Error("This sandbox session is no longer active.");
+          }
+        },
+      },
+      {
+        onLeaseRefresh: async () => {
+          const lease = await sandbox.getSessionLease();
+          await this.refreshSessionLease(sandbox.id, lease);
+        },
+      },
+    );
+  }
+
+  private async refreshSessionLease(sandboxId: string, lease: SandboxSessionLease): Promise<void> {
+    await this.resolveLatestWorkspace();
+    if (
+      !workspaceStateIsSession(this.#sandboxState) ||
+      this.#sandboxState.sandboxId !== sandboxId
+    ) {
+      throw new Error("Cannot refresh lease for an inactive sandbox session.");
+    }
+
+    await this.persistSandboxState(transitionToSession(sandboxId, lease));
+  }
+
+  private async resolveAttachableSession(): Promise<SandboxDriver | null> {
+    if (!workspaceStateIsSession(this.#sandboxState)) {
+      return null;
+    }
+
+    if (isWorkspaceSessionStateExpired(this.#sandboxState)) {
+      await this.persistSandboxState(transitionToCold());
+      return null;
+    }
+
+    try {
+      const sandbox = await this.resolveSandboxDriver(this.#record);
+      const lease = await sandbox.getSessionLease();
+      await this.persistSandboxState(transitionToSession(sandbox.id, lease));
+      return sandbox;
+    } catch (error) {
+      if (!this.#ctx.driverFactory.isSessionUnavailableError?.(error)) {
+        throw error;
+      }
+
+      await this.persistSandboxState(transitionToCold());
+      return null;
+    }
+  }
+
+  private async resolveSandboxDriver(workspace: WorkspaceRecord): Promise<SandboxDriver> {
     const policy = readWorkspacePolicy(workspace, this.#ctx.defaultPolicy);
     const resumeState = toDriverResumeState(this.#sandboxState);
     return resumeState
@@ -139,9 +248,20 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     if (!latest) {
       throw new Error(`Workspace with id "${this.#record.id}" no longer exists`);
     }
+
     this.#record = latest;
     this.#sandboxState = readWorkspaceSandboxState(latest);
-    return latest;
+    if (isWorkspaceSessionStateExpired(this.#sandboxState)) {
+      const result = await persistSandboxTransition(
+        this.#ctx.adapter.workspaces,
+        this.#record.id,
+        transitionToCold(),
+      );
+      this.#record = result.record;
+      this.#sandboxState = result.state;
+    }
+
+    return this.#record;
   }
 
   private async createPolicySnapshot(policy: WorkspacePolicy) {
@@ -156,4 +276,10 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     const workspace = await this.resolveLatestWorkspace();
     return readWorkspacePolicy(workspace, this.#ctx.defaultPolicy);
   }
+}
+
+function workspaceStateIsSession(
+  state: WorkspaceSandboxState,
+): state is Extract<WorkspaceSandboxState, { kind: "session" }> {
+  return state.kind === "session";
 }

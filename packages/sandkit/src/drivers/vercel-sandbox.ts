@@ -4,7 +4,9 @@ import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
   CommandResult,
   PersistedSandboxState,
+  SandboxSessionLease,
   SandboxDriver,
+  WorkspaceSessionProcess,
   SandboxCreateOptions,
   SandboxDriverFactory,
   WorkspaceRecord,
@@ -17,6 +19,11 @@ interface VercelCommandFinished {
   stderr(): Promise<string>;
 }
 
+interface VercelCommandHandle {
+  wait(): Promise<VercelCommandFinished>;
+  readonly cmdId?: string;
+}
+
 interface VercelPersistedState {
   snapshotId?: string;
 }
@@ -24,6 +31,7 @@ interface VercelPersistedState {
 export interface VercelSandboxDriverFactoryOptions {
   runtime?: string;
   timeout?: number;
+  ports?: number[];
 }
 
 class VercelSandboxDriver implements SandboxDriver {
@@ -42,6 +50,21 @@ class VercelSandboxDriver implements SandboxDriver {
     await this.#sandbox.updateNetworkPolicy(compileVercelNetworkPolicy(policy));
   }
 
+  async getSessionLease(): Promise<SandboxSessionLease> {
+    const sandbox = this.#sandbox;
+    const observedAt = new Date().toISOString();
+    const timeoutMs =
+      typeof sandbox.timeout === "number" && Number.isFinite(sandbox.timeout) && sandbox.timeout > 0
+        ? sandbox.timeout
+        : 60_000;
+
+    return {
+      sandboxId: sandbox.sandboxId,
+      observedAt,
+      expiresAt: new Date(Date.parse(observedAt) + timeoutMs).toISOString(),
+    };
+  }
+
   async runCommand(command: string, args: string[]): Promise<CommandResult> {
     const result = await this.#sandbox.runCommand(command, args);
     const finished = await this.#toCommandFinished(result);
@@ -53,7 +76,57 @@ class VercelSandboxDriver implements SandboxDriver {
     };
   }
 
+  async startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess> {
+    const started = await this.#sandbox.runCommand({
+      cmd: command,
+      args,
+      detached: true,
+    });
+    if (!isVercelCommandHandle(started)) {
+      throw new Error("Unexpected Vercel sandbox startProcess() response shape.");
+    }
+
+    const processId = started.cmdId ?? `${this.#sandbox.sandboxId}-${Date.now()}`;
+    return {
+      processId,
+      wait: async (): Promise<CommandResult> => {
+        const finished = await started.wait();
+        return {
+          exitCode: finished.exitCode,
+          stdout: await finished.stdout(),
+          stderr: await finished.stderr(),
+        };
+      },
+    };
+  }
+
+  async url(port: number): Promise<string> {
+    try {
+      return this.#sandbox.domain(port);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("No route for port")) {
+        throw error;
+      }
+
+      const refreshed = await Sandbox.get({ sandboxId: this.#sandbox.sandboxId });
+      return refreshed.domain(port);
+    }
+  }
+
+  async extendTimeout(durationMs: number): Promise<void> {
+    const extendTimeout = (
+      this.#sandbox as { extendTimeout?: (durationMs: number) => Promise<unknown> }
+    ).extendTimeout;
+    if (!extendTimeout) {
+      throw new Error("This Vercel sandbox does not support extendTimeout().");
+    }
+
+    await extendTimeout.call(this.#sandbox, durationMs);
+  }
+
   async snapshot(): Promise<PersistedSandboxState> {
+    // Vercel sandbox snapshot() restores through a new sandbox and implicitly stops the source sandbox.
+    // Keep this behavior as a provider detail in the driver implementation.
     const snapshot = await this.#sandbox.snapshot();
 
     return {
@@ -79,13 +152,42 @@ class VercelSandboxDriver implements SandboxDriver {
   }
 }
 
+function isVercelCommandHandle(value: unknown): value is VercelCommandHandle {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as { wait?: unknown; cmdId?: unknown };
+  if (typeof candidate.wait !== "function") {
+    return false;
+  }
+
+  return candidate.cmdId === undefined || typeof candidate.cmdId === "string";
+}
+
 class VercelSandboxDriverFactory implements SandboxDriverFactory {
   readonly #runtime: string;
   readonly #timeout: number;
+  readonly #ports?: number[];
 
   constructor(options: VercelSandboxDriverFactoryOptions = {}) {
     this.#runtime = options.runtime ?? "node24";
     this.#timeout = options.timeout ?? 60_000;
+    this.#ports = options.ports;
+  }
+
+  isSessionUnavailableError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("not found") ||
+      message.includes("does not exist") ||
+      message.includes("sandbox_stopped") ||
+      message.includes("sandbox stopped")
+    );
   }
 
   async createSandbox(
@@ -95,6 +197,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
     const sandbox = await Sandbox.create({
       runtime: this.#runtime,
       timeout: this.#timeout,
+      ports: this.#ports,
       networkPolicy: compileVercelNetworkPolicy(options.policy),
     });
 
@@ -123,6 +226,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
               snapshotId,
             },
             timeout: this.#timeout,
+            ports: this.#ports,
             networkPolicy: compileVercelNetworkPolicy(options.policy),
           });
 

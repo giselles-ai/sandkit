@@ -1,10 +1,28 @@
 import type { WorkspacePolicy } from "../policies/types.ts";
-import type { CommandResult, SandboxDriver, SandboxRunCommandOptions } from "../types.ts";
+import type {
+  CommandResult,
+  SandboxDriver,
+  SandboxRunCommandOptions,
+  WorkspaceSessionProcess,
+  WorkspaceSandboxLease,
+} from "../types.ts";
 import { makeSnapshotCommit, type SandboxCommit } from "./workspace-state.ts";
 
 export interface WorkspaceSandboxHandle {
   runCommand(command: string, args: string[]): Promise<CommandResult>;
   runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  openSession(): Promise<WorkspaceSessionHandle>;
+  attachSession(): Promise<WorkspaceSessionHandle>;
+  getActiveLease(): Promise<WorkspaceSandboxLease | null>;
+}
+
+export interface WorkspaceSessionHandle {
+  exec(command: string, args: string[]): Promise<CommandResult>;
+  exec(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  commit(): Promise<void>;
+  startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess>;
+  url(port: number): Promise<string>;
+  extendTimeout(durationMs: number): Promise<void>;
 }
 
 interface RunStartInput {
@@ -27,6 +45,14 @@ interface RunFinishInput {
 interface RunLifecycle {
   readonly onRunStart?: (input: RunStartInput) => Promise<string>;
   readonly onRunFinish?: (input: RunFinishInput) => Promise<void>;
+}
+
+interface SessionStateValidator {
+  readonly assertActive: () => Promise<void>;
+}
+
+interface SessionLeaseLifecycle {
+  readonly onLeaseRefresh?: () => Promise<void>;
 }
 
 type CommitHook = (commit: SandboxCommit) => Promise<void>;
@@ -224,11 +250,159 @@ export class ManagedSandbox {
   }
 }
 
+export class ManagedSession implements WorkspaceSessionHandle {
+  readonly #driver: SandboxDriver;
+  readonly #onCommit?: CommitHook;
+  readonly #resolveDefaultPolicy: DefaultPolicyResolver;
+  readonly #stateValidator?: SessionStateValidator;
+  readonly #leaseLifecycle?: SessionLeaseLifecycle;
+  #isActive = true;
+
+  constructor(
+    driver: SandboxDriver,
+    resolveDefaultPolicy: DefaultPolicyResolver,
+    onCommit?: CommitHook,
+    stateValidator?: SessionStateValidator,
+    leaseLifecycle?: SessionLeaseLifecycle,
+  ) {
+    this.#driver = driver;
+    this.#resolveDefaultPolicy = resolveDefaultPolicy;
+    this.#onCommit = onCommit;
+    this.#stateValidator = stateValidator;
+    this.#leaseLifecycle = leaseLifecycle;
+  }
+
+  get id(): string {
+    return this.#driver.id;
+  }
+
+  async exec(command: string, args: string[]): Promise<CommandResult>;
+  async exec(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  async exec(
+    inputOrCommand: string | SandboxRunCommandOptions,
+    args: string[] = [],
+  ): Promise<CommandResult> {
+    await this.assertSessionActive();
+    const normalized = await this.normalizeSessionInput(inputOrCommand, args);
+    this.ensureCommandShape(normalized.command, normalized.args);
+    await this.#driver.applyPolicy(normalized.policy);
+    return this.#driver.runCommand(normalized.command, [...normalized.args]);
+  }
+
+  async commit(): Promise<void> {
+    await this.assertSessionActive();
+    let snapshot: SandboxCommit;
+    try {
+      snapshot = await this.snapshotWithFallback();
+      if (this.#onCommit) {
+        await this.persistCommit(snapshot);
+      }
+    } finally {
+      this.#isActive = false;
+    }
+  }
+
+  async startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess> {
+    await this.assertSessionActive();
+    const startProcess = this.#driver.startProcess;
+    if (!startProcess) {
+      throw new Error(`This sandbox provider does not support startProcess().`);
+    }
+
+    return startProcess.call(this.#driver, command, [...args]);
+  }
+
+  async url(port: number): Promise<string> {
+    await this.assertSessionActive();
+    const url = this.#driver.url;
+    if (!url) {
+      throw new Error(`This sandbox provider does not support url(port).`);
+    }
+
+    return url.call(this.#driver, port);
+  }
+
+  async extendTimeout(durationMs: number): Promise<void> {
+    await this.assertSessionActive();
+    const extendTimeout = this.#driver.extendTimeout;
+    if (!extendTimeout) {
+      throw new Error(`This sandbox provider does not support extendTimeout().`);
+    }
+
+    await extendTimeout.call(this.#driver, durationMs);
+    if (this.#leaseLifecycle?.onLeaseRefresh) {
+      await this.#leaseLifecycle.onLeaseRefresh();
+    }
+  }
+
+  private async normalizeSessionInput(
+    inputOrCommand: string | SandboxRunCommandOptions,
+    args: readonly string[],
+  ): Promise<Required<SandboxRunCommandOptions>> {
+    if (typeof inputOrCommand === "string") {
+      return {
+        command: inputOrCommand,
+        args,
+        policy: await this.#resolveDefaultPolicy(),
+      };
+    }
+
+    return {
+      command: inputOrCommand.command,
+      args: inputOrCommand.args ?? [],
+      policy: inputOrCommand.policy ?? (await this.#resolveDefaultPolicy()),
+    };
+  }
+
+  private ensureCommandShape(command: string, args: readonly string[]): void {
+    if (!command.trim()) {
+      throw new Error("Sandbox command must not be empty.");
+    }
+
+    if (!Array.isArray(args)) {
+      throw new Error("Sandbox command arguments must be an array.");
+    }
+  }
+
+  private async assertSessionActive(): Promise<void> {
+    if (!this.#isActive) {
+      throw new Error("This sandbox session has already been committed and is no longer active.");
+    }
+    if (this.#stateValidator) {
+      await this.#stateValidator.assertActive();
+    }
+  }
+
+  private async snapshotWithFallback(): Promise<SandboxCommit> {
+    const snapshot = await this.#driver.snapshot();
+    return makeSnapshotCommit(snapshot);
+  }
+
+  private async persistCommit(commit: SandboxCommit): Promise<void> {
+    if (!this.#onCommit) {
+      return;
+    }
+
+    await this.#onCommit(commit);
+  }
+}
+
 export class LazySandboxHandle implements WorkspaceSandboxHandle {
   readonly #resolveSandbox: () => Promise<ManagedSandbox>;
+  readonly #openSession: () => Promise<WorkspaceSessionHandle>;
+  readonly #attachSession: () => Promise<WorkspaceSessionHandle>;
+  readonly #getActiveLease: () => Promise<WorkspaceSandboxLease | null>;
 
-  constructor(resolveSandbox: () => Promise<ManagedSandbox>) {
+  constructor(
+    resolveSandbox: () => Promise<ManagedSandbox>,
+    openSession: () => Promise<WorkspaceSessionHandle>,
+    attachSession: () => Promise<WorkspaceSessionHandle>,
+    getActiveLease: () => Promise<WorkspaceSandboxLease | null>,
+  ) {
     this.#resolveSandbox = resolveSandbox;
+    this.#openSession = openSession;
+    this.#attachSession = attachSession;
+    this.#getActiveLease = getActiveLease;
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult>;
@@ -242,5 +416,17 @@ export class LazySandboxHandle implements WorkspaceSandboxHandle {
       return sandbox.runCommand(inputOrCommand, args);
     }
     return sandbox.runCommand(inputOrCommand);
+  }
+
+  async openSession(): Promise<WorkspaceSessionHandle> {
+    return this.#openSession();
+  }
+
+  async attachSession(): Promise<WorkspaceSessionHandle> {
+    return this.#attachSession();
+  }
+
+  async getActiveLease(): Promise<WorkspaceSandboxLease | null> {
+    return this.#getActiveLease();
   }
 }

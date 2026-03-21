@@ -170,6 +170,14 @@ function createFailingDriverFactory(): SandboxDriverFactory {
         async applyPolicy() {
           return;
         },
+        async getSessionLease() {
+          const observedAt = new Date().toISOString();
+          return {
+            sandboxId: "broken-sandbox",
+            observedAt,
+            expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
+          };
+        },
         async runCommand() {
           throw new Error("command exploded");
         },
