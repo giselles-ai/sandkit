@@ -36,7 +36,8 @@ class MockSandboxDriver implements SandboxDriver {
   #policy: WorkspacePolicy;
   readonly id: string;
   readonly provider = "mock";
-  readonly #timeoutMs: number;
+  #timeoutMs: number;
+  #expiresAtMs: number | null = null;
 
   constructor(id: string, files: FileMap = {}, policy: WorkspacePolicy = allowAll()) {
     this.id = id;
@@ -51,12 +52,27 @@ class MockSandboxDriver implements SandboxDriver {
 
   async getSessionLease(): Promise<SandboxSessionLease> {
     const observedAt = new Date().toISOString();
+    const observedAtMs = Date.parse(observedAt);
+    if (this.#expiresAtMs === null) {
+      this.#expiresAtMs = observedAtMs + this.#timeoutMs;
+    }
+    if (this.#expiresAtMs < observedAtMs) {
+      this.#expiresAtMs = observedAtMs;
+    }
 
     return {
       sandboxId: this.id,
       observedAt,
-      expiresAt: new Date(Date.parse(observedAt) + this.#timeoutMs).toISOString(),
+      expiresAt: new Date(this.#expiresAtMs).toISOString(),
     };
+  }
+
+  async extendTimeout(durationMs: number): Promise<void> {
+    const observedAtMs = Date.now();
+    if (this.#expiresAtMs === null || this.#expiresAtMs < observedAtMs) {
+      this.#expiresAtMs = observedAtMs;
+    }
+    this.#expiresAtMs = this.#expiresAtMs + durationMs;
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult> {

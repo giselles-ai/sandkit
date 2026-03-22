@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "setup": "bun run db:reset && bun run db:migrate",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

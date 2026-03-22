@@ -75,7 +75,12 @@ export interface SandboxDriver {
   readonly id: string;
   readonly provider: string;
   applyPolicy(policy: WorkspacePolicy): Promise<void>;
-  /** Returns live session information for the current sandbox instance. */
+  /**
+   * Returns lease timing observed from the current sandbox instance.
+   * Some providers expose this as an interpreted timeout value.
+   * Sandkit persists lease updates only from explicit session open/extend paths,
+   * so callers should not treat mere reads as lease refreshes.
+   */
   getSessionLease(): Promise<SandboxSessionLease>;
   runCommand(command: string, args: string[]): Promise<CommandResult>;
   startProcess?(command: string, args: string[]): Promise<WorkspaceSessionProcess>;

@@ -17,6 +17,10 @@ async function assertThrows(message: string, operation: () => Promise<unknown>):
   throw new Error(`Smoke assertion failed: ${message} did not throw`);
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function runSmoke(): Promise<void> {
   const app = sandkit({
     database: createMemoryAdapter(),
@@ -37,6 +41,35 @@ async function runSmoke(): Promise<void> {
     throw new Error("Smoke failed: expected active lease after openSession().");
   }
 
+  const baseObservedAtMs = Date.parse(lease.observedAt);
+  const baseExpiresAtMs = Date.parse(lease.expiresAt);
+  if (!Number.isFinite(baseObservedAtMs) || !Number.isFinite(baseExpiresAtMs)) {
+    throw new Error("Smoke failed: lease timestamps were not parsable.");
+  }
+  const extensionMs = 30_000;
+
+  await wait(500);
+  const leaseAfterObservation = await workspace.sandbox.getActiveLease();
+  if (
+    leaseAfterObservation === null ||
+    leaseAfterObservation.expiresAt !== lease.expiresAt ||
+    leaseAfterObservation.observedAt !== lease.observedAt
+  ) {
+    throw new Error(
+      "Smoke failed: getActiveLease should not refresh lease expiry purely by observation.",
+    );
+  }
+
+  await session.extendTimeout(extensionMs);
+  const leaseAfterExtend = await workspace.sandbox.getActiveLease();
+  if (
+    leaseAfterExtend === null ||
+    Date.parse(leaseAfterExtend.observedAt) <= baseObservedAtMs ||
+    Date.parse(leaseAfterExtend.expiresAt) < baseExpiresAtMs + extensionMs
+  ) {
+    throw new Error("Smoke failed: extendTimeout should advance lease timing.");
+  }
+
   await assertThrows("runCommand with active session", async () => {
     await workspace.sandbox.runCommand("echo", ["hello"]);
   });
@@ -47,6 +80,18 @@ async function runSmoke(): Promise<void> {
   }
 
   const attached = await workspace.sandbox.attachSession();
+  await wait(500);
+  const leaseAfterAttach = await workspace.sandbox.getActiveLease();
+  if (
+    leaseAfterAttach === null ||
+    leaseAfterAttach.expiresAt !== leaseAfterExtend.expiresAt ||
+    leaseAfterAttach.observedAt !== leaseAfterExtend.observedAt
+  ) {
+    throw new Error(
+      "Smoke failed: attachSession should not refresh lease expiry purely by observation.",
+    );
+  }
+
   const read = await attached.exec("cat", ["hello.txt"]);
   if (read.stdout.trim() !== "session") {
     throw new Error("Smoke failed: attached session could not see command output.");

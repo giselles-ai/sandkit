@@ -87,6 +87,11 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     this.#sandboxState = readWorkspaceSandboxState(result);
   }
 
+  /**
+   * Returns a current lease only if a session is still attachable and unexpired.
+   * This is attachment-state derived from persisted metadata; it is not intended
+   * to reset expiry on read.
+   */
   async getActiveLease(): Promise<WorkspaceSandboxLease | null> {
     await this.resolveLatestWorkspace();
     const sandbox = await this.resolveAttachableSession();
@@ -211,10 +216,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     }
 
     try {
-      const sandbox = await this.resolveSandboxDriver(this.#record);
-      const lease = await sandbox.getSessionLease();
-      await this.persistSandboxState(transitionToSession(sandbox.id, lease));
-      return sandbox;
+      return await this.resolveSandboxDriver(this.#record);
     } catch (error) {
       if (!this.#ctx.driverFactory.isSessionUnavailableError?.(error)) {
         throw error;
