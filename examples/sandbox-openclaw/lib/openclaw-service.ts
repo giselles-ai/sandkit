@@ -459,10 +459,14 @@ function buildOpenClawConfig(authToken: string, controlUiOrigin: string): string
   );
 }
 
-async function withRetry<T>(action: () => Promise<T>, attempts = 6, baseMs = 500): Promise<T> {
+async function withRetry<T>(
+  action: (attempt: number) => Promise<T>,
+  attempts = 6,
+  baseMs = 500,
+): Promise<T> {
   for (let index = 1; index <= attempts; index += 1) {
     try {
-      return await action();
+      return await action(index);
     } catch (error) {
       if (index === attempts) {
         throw error;
@@ -480,7 +484,11 @@ async function waitForOpenClawReady(url: string): Promise<void> {
   const readyUrl = buildSandboxReadyCommand(url);
 
   await withRetry(
-    async () => {
+    async (attempt) => {
+      console.info("[openclaw] waitForOpenClawReady attempt", {
+        attempt,
+        url: readyUrl,
+      });
       const response = await fetch(readyUrl, { cache: "no-store" });
       if (!response.ok) {
         throw new Error(`OpenClaw not ready: status ${response.status}`);
@@ -514,7 +522,11 @@ async function waitForSessionUrl(
   session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
 ): Promise<string> {
   return withRetry(
-    async () => {
+    async (attempt) => {
+      console.info("[openclaw] waitForSessionUrl attempt", {
+        attempt,
+        port: OPENCLAW_GATEWAY_PORT,
+      });
       return session.url(OPENCLAW_GATEWAY_PORT);
     },
     20,
@@ -554,7 +566,11 @@ async function probeLocalGateway(
   session: Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["attachSession"]>>,
 ): Promise<void> {
   await withRetry(
-    async () => {
+    async (attempt) => {
+      console.info("[openclaw] probeLocalGateway attempt", {
+        attempt,
+        port: OPENCLAW_GATEWAY_PORT,
+      });
       const result = await session.exec("bash", [
         "-lc",
         [
@@ -867,10 +883,19 @@ async function ensureGatewayRunning(
     workspaceId: workspace.id,
     openclawSessionId: openclawSession.id,
   });
+  const sessionResolutionStep = logTimedStepStart("resolveSandboxSession", {
+    workspaceId: workspace.id,
+    openclawSessionId: openclawSession.id,
+  });
   const existingLease = await workspace.sandbox.getActiveLease();
+  const attachedExisting = Boolean(existingLease);
   const activeSession = existingLease
     ? await workspace.sandbox.attachSession()
     : await workspace.sandbox.openSession();
+  sessionResolutionStep.success({
+    attachedExisting,
+    sandboxId: existingLease?.sandboxId ?? null,
+  });
 
   const sessionUrlStep = logTimedStepStart("waitForSessionUrl", {
     workspaceId: workspace.id,
@@ -878,9 +903,23 @@ async function ensureGatewayRunning(
   });
   const url = await waitForSessionUrl(activeSession);
   sessionUrlStep.success({ url });
+  const bootstrapStatusStep = logTimedStepStart("readBootstrapStatus", {
+    workspaceId: workspace.id,
+    openclawSessionId: openclawSession.id,
+  });
   let bootstrapReady = await readBootstrapStatusWithSession(activeSession);
+  bootstrapStatusStep.success({ bootstrapReady });
   if (!bootstrapReady) {
+    const bootstrapRepairStep = logTimedStepStart("bootstrapRepair", {
+      workspaceId: workspace.id,
+      openclawSessionId: openclawSession.id,
+      phase: "repairing",
+      isRepair,
+    });
     if (!isRepair) {
+      bootstrapRepairStep.failure(
+        new Error("OpenClaw bootstrap artifacts are missing and startup is not in repair mode."),
+      );
       await updateSession(openclawSession.id, {
         phase: "failed",
         error_code: "bootstrap_missing",
@@ -899,25 +938,36 @@ async function ensureGatewayRunning(
     });
     await repairOpenClawInSession(activeSession);
     bootstrapReady = await readBootstrapStatusWithSession(activeSession);
+    bootstrapRepairStep.success({ bootstrapReady });
   }
 
   if (!bootstrapReady) {
+    const finalBootstrapFailureStep = logTimedStepStart("bootstrapMissingFailure", {
+      workspaceId: workspace.id,
+      openclawSessionId: openclawSession.id,
+    });
     await updateSession(openclawSession.id, {
       phase: "failed",
       error_code: "bootstrap_missing",
       error_message: "OpenClaw bootstrap artifacts still missing after repair.",
       updated_at: new Date(),
     });
+    finalBootstrapFailureStep.failure(
+      new Error("Bootstrap artifacts are still missing after repair."),
+    );
     throw new Error("OpenClaw bootstrap artifacts are missing from the workspace.");
   }
 
+  const controlUiConfigStep = logTimedStepStart("updateControlUiConfig", {
+    workspaceId: workspace.id,
+    openclawSessionId: openclawSession.id,
+    url,
+  });
   await updateControlUiConfigForSession(activeSession, url);
+  controlUiConfigStep.success();
 
-  try {
-    if (onProgress) {
-      await onProgress("server_started");
-    }
-    const localProbeStep = logTimedStepStart("probeLocalGateway", {
+  const restartGatewayFromUnhealthyState = async () => {
+    const restartStartStep = logTimedStepStart("restartGatewayFromUnhealthyState", {
       workspaceId: workspace.id,
       openclawSessionId: openclawSession.id,
       phase: "server_starting",
@@ -928,19 +978,7 @@ async function ensureGatewayRunning(
       error_message: null,
       updated_at: new Date(),
     });
-    await probeLocalGateway(activeSession);
-    localProbeStep.success();
-  } catch {
-    await updateSession(openclawSession.id, {
-      phase: "server_starting",
-      error_code: null,
-      error_message: null,
-      updated_at: new Date(),
-    });
     await stopGatewayProcess(activeSession);
-    if (onProgress) {
-      await onProgress("server_started");
-    }
     const gatewayProcessOutput = createProcessOutputCapture(
       `gateway bootstrap ${openclawSession.id}`,
     );
@@ -969,9 +1007,12 @@ async function ensureGatewayRunning(
         workspaceId: workspace.id,
         openclawSessionId: openclawSession.id,
         phase: "server_starting",
+        attempt: "restarted",
       });
       await probeLocalGateway(activeSession);
       restartedProbeStep.success();
+      restartStartStep.success();
+      return;
     } catch (error) {
       const diagnostics = await collectGatewayDiagnostics(activeSession);
       const processOutput = gatewayProcessOutput.snapshot();
@@ -982,6 +1023,7 @@ async function ensureGatewayRunning(
         error_message: "Gateway failed to become healthy.",
         updated_at: new Date(),
       });
+      restartStartStep.failure(error);
       throw new Error(
         [
           message,
@@ -993,6 +1035,38 @@ async function ensureGatewayRunning(
           .join("\n\n"),
       );
     }
+  };
+
+  try {
+    if (onProgress) {
+      await onProgress("server_started");
+    }
+    if (!isRepair && attachedExisting) {
+      const localProbeStep = logTimedStepStart("probeLocalGateway", {
+        workspaceId: workspace.id,
+        openclawSessionId: openclawSession.id,
+        phase: "server_starting",
+        attempt: "initial",
+      });
+      await updateSession(openclawSession.id, {
+        phase: "server_starting",
+        error_code: null,
+        error_message: null,
+        updated_at: new Date(),
+      });
+      await probeLocalGateway(activeSession);
+      localProbeStep.success();
+    } else {
+      console.info("[openclaw] skipping initial localhost probe", {
+        workspaceId: workspace.id,
+        openclawSessionId: openclawSession.id,
+        isRepair,
+        attachedExisting,
+      });
+      await restartGatewayFromUnhealthyState();
+    }
+  } catch {
+    await restartGatewayFromUnhealthyState();
   }
 
   const publicReadyStep = logTimedStepStart("waitForOpenClawReady", {
