@@ -57,6 +57,30 @@ export interface WorkspaceSandboxLease {
 export interface WorkspaceSessionProcess {
   readonly processId: string;
   wait(): Promise<CommandResult>;
+  /**
+   * Accesses the same normalized log stream used by onStdout/onStderr callbacks.
+   * Sandkit keeps a single internal stream, so callbacks and logs() observe
+   * the same sequence and buffered historical chunks are replayed to new readers.
+   */
+  logs?: () => AsyncIterable<WorkspaceSessionLog>;
+}
+
+export interface WorkspaceSessionLog {
+  readonly stream: "stdout" | "stderr";
+  readonly chunk: string;
+}
+
+export interface WorkspaceSessionProcessStartInput {
+  readonly command: string;
+  readonly args: readonly string[];
+  /**
+   * Callbacks consume chunks from Sandkit's normalized process log stream.
+   */
+  readonly onStdout?: ((chunk: string) => void) | undefined;
+  /**
+   * Callbacks consume chunks from Sandkit's normalized process log stream.
+   */
+  readonly onStderr?: ((chunk: string) => void) | undefined;
 }
 
 export interface SandboxRunCommandOptions {
@@ -83,7 +107,7 @@ export interface SandboxDriver {
    */
   getSessionLease(): Promise<SandboxSessionLease>;
   runCommand(command: string, args: string[]): Promise<CommandResult>;
-  startProcess?(command: string, args: string[]): Promise<WorkspaceSessionProcess>;
+  startProcess?(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess>;
   /** Persists and restores durability state through commit() and attach/restore APIs. */
   snapshot(): Promise<PersistedSandboxState>;
   url?(port: number): Promise<string>;

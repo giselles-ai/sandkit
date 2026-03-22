@@ -3,6 +3,7 @@ import {
   MockSandboxDriverFactory,
   sandkit,
 } from "../../packages/sandkit/src/index.ts";
+import { normalizeCommandLog } from "../../packages/sandkit/src/drivers/vercel-sandbox.ts";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {
@@ -95,6 +96,55 @@ async function runSmoke(): Promise<void> {
   const read = await attached.exec("cat", ["hello.txt"]);
   if (read.stdout.trim() !== "session") {
     throw new Error("Smoke failed: attached session could not see command output.");
+  }
+
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
+  const logChunks: string[] = [];
+  const startedProcess = await attached.startProcess({
+    command: "echo",
+    args: ["streaming", "process"],
+    onStdout: (chunk) => {
+      stdoutChunks.push(chunk);
+    },
+    onStderr: (chunk) => {
+      stderrChunks.push(chunk);
+    },
+  });
+  const startedProcessLogs = startedProcess.logs?.();
+  const logCollector = (async () => {
+    if (!startedProcessLogs) {
+      throw new Error("Smoke failed: expected logs() iterator to be available.");
+    }
+    for await (const log of startedProcessLogs) {
+      if (log.stream === "stdout") {
+        logChunks.push(log.chunk);
+      }
+    }
+  })();
+  const startProcessResult = await startedProcess.wait();
+  if (startProcessResult.exitCode !== 0 || startProcessResult.stdout.trim() !== "streaming process") {
+    throw new Error("Smoke failed: startProcess() did not complete with expected output.");
+  }
+  await logCollector;
+  const callbackOutput = stdoutChunks.join("");
+  const loggedOutput = logChunks.join("");
+  if (!stdoutChunks[0]?.includes("streaming process")) {
+    throw new Error("Smoke failed: startProcess onStdout callback did not receive output.");
+  }
+  if (!loggedOutput.includes("streaming process")) {
+    throw new Error("Smoke failed: startProcess logs() did not expose output while callbacks were active.");
+  }
+  if (!callbackOutput.includes(loggedOutput)) {
+    throw new Error("Smoke failed: startProcess callbacks and logs() should observe the same stdout payload.");
+  }
+  if (stderrChunks.length !== 0) {
+    throw new Error("Smoke failed: startProcess onStderr callback should not receive output for successful echo.");
+  }
+
+  const normalizedLogChunk = normalizeCommandLog({ stream: "stdout", data: "streamed-via-data" });
+  if (!normalizedLogChunk || normalizedLogChunk.chunk !== "streamed-via-data") {
+    throw new Error("Smoke failed: normalizeCommandLog should parse Vercel stream/data logs.");
   }
 
   await attached.commit();

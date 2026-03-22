@@ -3,6 +3,7 @@ import type {
   CommandResult,
   SandboxDriver,
   SandboxRunCommandOptions,
+  WorkspaceSessionProcessStartInput,
   WorkspaceSessionProcess,
   WorkspaceSandboxLease,
 } from "../types.ts";
@@ -21,6 +22,7 @@ export interface WorkspaceSessionHandle {
   exec(input: SandboxRunCommandOptions): Promise<CommandResult>;
   commit(): Promise<void>;
   startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess>;
+  startProcess(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess>;
   url(port: number): Promise<string>;
   extendTimeout(durationMs: number): Promise<void>;
 }
@@ -302,14 +304,40 @@ export class ManagedSession implements WorkspaceSessionHandle {
     }
   }
 
-  async startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess> {
+  async startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess>;
+  async startProcess(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess>;
+  async startProcess(
+    inputOrCommand: string | WorkspaceSessionProcessStartInput,
+    args: string[] = [],
+  ): Promise<WorkspaceSessionProcess> {
     await this.assertSessionActive();
     const startProcess = this.#driver.startProcess;
     if (!startProcess) {
       throw new Error(`This sandbox provider does not support startProcess().`);
     }
 
-    return startProcess.call(this.#driver, command, [...args]);
+    const normalized =
+      typeof inputOrCommand === "string"
+        ? {
+            command: inputOrCommand,
+            args,
+            onStdout: undefined,
+            onStderr: undefined,
+          }
+        : inputOrCommand;
+    if (!normalized.command.trim()) {
+      throw new Error("Sandbox process command must not be empty.");
+    }
+    if (!Array.isArray(normalized.args)) {
+      throw new Error("Sandbox process args must be an array.");
+    }
+
+    return startProcess.call(this.#driver, {
+      command: normalized.command,
+      args: [...normalized.args],
+      onStdout: normalized.onStdout,
+      onStderr: normalized.onStderr,
+    });
   }
 
   async url(port: number): Promise<string> {

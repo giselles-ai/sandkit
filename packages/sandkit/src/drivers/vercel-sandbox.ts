@@ -6,7 +6,9 @@ import type {
   PersistedSandboxState,
   SandboxSessionLease,
   SandboxDriver,
+  WorkspaceSessionLog,
   WorkspaceSessionProcess,
+  WorkspaceSessionProcessStartInput,
   SandboxCreateOptions,
   SandboxDriverFactory,
   WorkspaceRecord,
@@ -22,6 +24,7 @@ interface VercelCommandFinished {
 interface VercelCommandHandle {
   wait(): Promise<VercelCommandFinished>;
   readonly cmdId?: string;
+  readonly logs?: () => unknown;
 }
 
 interface VercelPersistedState {
@@ -76,10 +79,10 @@ class VercelSandboxDriver implements SandboxDriver {
     };
   }
 
-  async startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess> {
+  async startProcess(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess> {
     const started = await this.#sandbox.runCommand({
-      cmd: command,
-      args,
+      cmd: input.command,
+      args: [...input.args],
       detached: true,
     });
     if (!isVercelCommandHandle(started)) {
@@ -87,6 +90,12 @@ class VercelSandboxDriver implements SandboxDriver {
     }
 
     const processId = started.cmdId ?? `${this.#sandbox.sandboxId}-${Date.now()}`;
+    const commandLogBroadcast = createCommandLogBroadcaster(
+      getCommandLogIterator(started),
+      input.onStdout,
+      input.onStderr,
+    );
+
     return {
       processId,
       wait: async (): Promise<CommandResult> => {
@@ -97,6 +106,9 @@ class VercelSandboxDriver implements SandboxDriver {
           stderr: await finished.stderr(),
         };
       },
+      logs: commandLogBroadcast
+        ? () => commandLogBroadcast()
+        : undefined,
     };
   }
 
@@ -163,6 +175,161 @@ function isVercelCommandHandle(value: unknown): value is VercelCommandHandle {
   }
 
   return candidate.cmdId === undefined || typeof candidate.cmdId === "string";
+}
+
+function isIterable<T = unknown>(value: unknown): value is Iterable<T> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as Iterable<T>)[Symbol.iterator] === "function"
+  );
+}
+
+function isAsyncIterable<T = unknown>(value: unknown): value is AsyncIterable<T> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === "function"
+  );
+}
+
+function getCommandLogIterator(raw: VercelCommandHandle): AsyncIterable<unknown> | undefined {
+  const rawLogs = raw.logs?.();
+  if (rawLogs === undefined) {
+    return undefined;
+  }
+  if (isAsyncIterable<unknown>(rawLogs)) {
+    return rawLogs;
+  }
+  if (isIterable<unknown>(rawLogs)) {
+    return toAsyncIterableFromSync(rawLogs);
+  }
+  return undefined;
+}
+
+function toAsyncIterableFromSync<T>(iterable: Iterable<T>): AsyncIterable<T> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const value of iterable) {
+        yield value;
+      }
+    },
+  };
+}
+
+function createCommandLogBroadcaster(
+  logs: AsyncIterable<unknown> | undefined,
+  onStdout?: (chunk: string) => void,
+  onStderr?: (chunk: string) => void,
+): (() => AsyncIterable<WorkspaceSessionLog>) | undefined {
+  if (!logs) {
+    return undefined;
+  }
+
+  const bufferedLogs: WorkspaceSessionLog[] = [];
+  const waiters: Array<() => void> = [];
+  let completed = false;
+  let error: unknown = null;
+  let pumpStarted = false;
+
+  const notifyWaiters = () => {
+    while (waiters.length > 0) {
+      waiters.pop()?.();
+    }
+  };
+
+  const run = async (): Promise<void> => {
+    if (pumpStarted) {
+      return;
+    }
+    pumpStarted = true;
+
+    try {
+      for await (const log of logs) {
+        const normalized = normalizeCommandLog(log);
+        if (!normalized) {
+          continue;
+        }
+
+        bufferedLogs.push(normalized);
+        if (normalized.stream === "stderr") {
+          onStderr?.(normalized.chunk);
+        } else {
+          onStdout?.(normalized.chunk);
+        }
+        notifyWaiters();
+      }
+    } catch (cause) {
+      error = cause;
+    } finally {
+      completed = true;
+      notifyWaiters();
+    }
+  };
+
+  void run().catch(() => {});
+
+  const waitForWork = (): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      waiters.push(resolve);
+    });
+  };
+
+  const createLogIterable = (): AsyncIterable<WorkspaceSessionLog> => {
+    return {
+      async *[Symbol.asyncIterator]() {
+        let index = 0;
+        while (true) {
+          if (index < bufferedLogs.length) {
+            yield bufferedLogs[index++]!;
+            continue;
+          }
+          if (error !== null) {
+            throw error instanceof Error ? error : new Error("startProcess logs failed.");
+          }
+          if (completed) {
+            return;
+          }
+          await waitForWork();
+        }
+      },
+    };
+  };
+
+  return createLogIterable;
+}
+
+export function normalizeCommandLog(log: unknown): WorkspaceSessionLog | null {
+  if (typeof log === "string") {
+    return { stream: "stdout", chunk: log };
+  }
+  if (typeof log !== "object" || log === null) {
+    return null;
+  }
+
+  const candidate = log as {
+    stream?: unknown;
+    output?: unknown;
+    chunk?: unknown;
+    text?: unknown;
+    message?: unknown;
+    data?: unknown;
+  };
+  const streamValue = candidate.stream;
+  const stream = streamValue === "stderr" || streamValue === "stdout" ? streamValue : "stdout";
+  const rawChunk =
+    candidate.data ??
+    candidate.output ??
+    candidate.chunk ??
+    candidate.text ??
+    candidate.message ??
+    null;
+
+  if (typeof rawChunk !== "string") {
+    return null;
+  }
+
+  return { stream, chunk: rawChunk };
 }
 
 class VercelSandboxDriverFactory implements SandboxDriverFactory {

@@ -5,6 +5,8 @@ import type {
   SandboxSessionLease,
   PersistedSandboxState,
   SandboxDriver,
+  WorkspaceSessionLog,
+  WorkspaceSessionProcessStartInput,
   SandboxCreateOptions,
   SandboxDriverFactory,
   WorkspaceRecord,
@@ -73,6 +75,35 @@ class MockSandboxDriver implements SandboxDriver {
       this.#expiresAtMs = observedAtMs;
     }
     this.#expiresAtMs = this.#expiresAtMs + durationMs;
+  }
+
+  async startProcess(input: WorkspaceSessionProcessStartInput): Promise<{
+    processId: string;
+    wait: () => Promise<CommandResult>;
+    logs: () => AsyncIterable<WorkspaceSessionLog>;
+  }> {
+    const commandResult = await this.runCommand(input.command, [...input.args]);
+    if (input.onStdout && commandResult.stdout) {
+      input.onStdout(commandResult.stdout);
+    }
+    if (input.onStderr && commandResult.stderr) {
+      input.onStderr(commandResult.stderr);
+    }
+
+    return {
+      processId: `${this.id}-${Date.now()}`,
+      wait: async () => commandResult,
+      logs: () => {
+        const chunks: WorkspaceSessionLog[] = [];
+        if (commandResult.stdout) {
+          chunks.push({ stream: "stdout", chunk: commandResult.stdout });
+        }
+        if (commandResult.stderr) {
+          chunks.push({ stream: "stderr", chunk: commandResult.stderr });
+        }
+        return toAsyncIterable(chunks);
+      },
+    };
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult> {
@@ -157,6 +188,16 @@ class MockSandboxDriver implements SandboxDriver {
     this.#files[target] = content;
     return this.ok("");
   }
+}
+
+function toAsyncIterable<T>(items: T[]): AsyncIterable<T> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const item of items) {
+        yield item;
+      }
+    },
+  };
 }
 
 export class MockSandboxDriverFactory implements SandboxDriverFactory {
