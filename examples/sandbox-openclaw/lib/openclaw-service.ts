@@ -878,7 +878,10 @@ async function ensureGatewayRunning(
   updateSession: UpdateOpenClawSessionRecord,
   isRepair: boolean,
   onProgress?: (phase: OpenClawPublicPhase) => Promise<void>,
-): Promise<string> {
+): Promise<{
+  url: string;
+  lease: NonNullable<Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["getActiveLease"]>>>;
+}> {
   const ensureStep = logTimedStepStart("ensureGatewayRunning", {
     workspaceId: workspace.id,
     openclawSessionId: openclawSession.id,
@@ -1087,8 +1090,12 @@ async function ensureGatewayRunning(
     updated_at: new Date(),
   });
 
-  ensureStep.success({ url, sandboxId: lease?.sandboxId ?? null });
-  return url;
+  if (!lease) {
+    throw new Error("Active lease disappeared before OpenClaw startup completed.");
+  }
+
+  ensureStep.success({ url, sandboxId: lease.sandboxId });
+  return { url, lease };
 }
 
 async function readSessionToken(
@@ -1526,10 +1533,18 @@ async function createRuntime(): Promise<Runtime> {
       activeSessionId: session.id,
       lastErrorAt: null,
     });
-    let openclawUrl: string;
+    let startupResult:
+      | {
+          url: string;
+          lease: NonNullable<
+            Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["getActiveLease"]>>
+          >;
+        }
+      | undefined;
+    let didFail = false;
 
     try {
-      openclawUrl = await ensureGatewayRunning(
+      startupResult = await ensureGatewayRunning(
         workspace,
         session,
         updateOpenClawSessionRecord,
@@ -1539,11 +1554,12 @@ async function createRuntime(): Promise<Runtime> {
             phase,
             activeSessionId: session.id,
             lastErrorAt: null,
-          });
-        },
-      );
-      const isReady = await isOpenClawReady(openclawUrl);
+        });
+      },
+    );
+      const isReady = await isOpenClawReady(startupResult.url);
       if (!isReady) {
+        didFail = true;
         await markSessionFailure(
           workspace.id,
           session,
@@ -1557,6 +1573,7 @@ async function createRuntime(): Promise<Runtime> {
         });
       }
     } catch (error) {
+      didFail = true;
       startSessionStep.failure(error, {
         workspaceId: workspace.id,
         openclawSessionId: session.id,
@@ -1568,16 +1585,35 @@ async function createRuntime(): Promise<Runtime> {
       );
     }
 
-    const getStateStep = logTimedStepStart("startSession.getState", {
-      workspaceId: workspace.id,
-      openclawSessionId: session.id,
-    });
-    const nextState = await getState();
-    getStateStep.success({
-      hasActiveSession: nextState.hasActiveSession,
-      sandboxId: nextState.sandboxId ?? null,
-      openclawUrl: nextState.openclawUrl ?? null,
-    });
+    let nextState: OpenClawState;
+    if (!didFail && startupResult) {
+      const token = await readSessionToken(await workspace.sandbox.attachSession());
+      nextState = {
+        hasWorkspace: true,
+        workspaceId: workspace.id,
+        hasActiveSession: true,
+        openclawPhase: "ready",
+        sandboxId: startupResult.lease.sandboxId,
+        remainingMs: startupResult.lease.remainingMs,
+        expiresAt: startupResult.lease.expiresAt,
+        connectCommand: `sandbox connect ${startupResult.lease.sandboxId}`,
+        openclawUrl: token
+          ? `${startupResult.url}#token=${encodeURIComponent(token)}`
+          : startupResult.url,
+      };
+    } else {
+      const getStateStep = logTimedStepStart("startSession.getState", {
+        workspaceId: workspace.id,
+        openclawSessionId: session.id,
+      });
+      nextState = await getState();
+      getStateStep.success({
+        hasActiveSession: nextState.hasActiveSession,
+        sandboxId: nextState.sandboxId ?? null,
+        openclawUrl: nextState.openclawUrl ?? null,
+      });
+    }
+
     startSessionStep.success({
       workspaceId: workspace.id,
       openclawSessionId: session.id,
