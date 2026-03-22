@@ -1409,6 +1409,7 @@ async function createRuntime(): Promise<Runtime> {
 
   async function extractActiveSessionInfo(
     workspace: PublicWorkspaceHandle,
+    knownPublicUrl?: string | null,
   ): Promise<Pick<
     OpenClawState,
     | "hasActiveSession"
@@ -1435,6 +1436,22 @@ async function createRuntime(): Promise<Runtime> {
     };
 
     try {
+      if (knownPublicUrl) {
+        if (!(await isOpenClawReady(knownPublicUrl))) {
+          return baseState;
+        }
+
+        const session = await workspace.sandbox.attachSession();
+        const token = await readSessionToken(session);
+        const uiUrl = token
+          ? `${knownPublicUrl}#token=${encodeURIComponent(token)}`
+          : knownPublicUrl;
+        return {
+          ...baseState,
+          openclawUrl: uiUrl,
+        };
+      }
+
       const session = await workspace.sandbox.attachSession();
       const openclawUrl = await waitForSessionUrl(session);
       if (!(await isOpenClawReady(openclawUrl))) {
@@ -1470,8 +1487,14 @@ async function createRuntime(): Promise<Runtime> {
     }
 
     const hasDurableBootstrap = await hasDurableOpenClawBootstrap(workspace.id);
-    const workspaceState = await extractActiveSessionInfo(workspace);
     const workspaceSummary = await loadOpenClawSummary(workspace.id);
+    const activeSessionRecord = workspaceSummary.activeSessionId
+      ? await getOpenClawSessionById(workspaceSummary.activeSessionId)
+      : await getLatestUnfinishedSession(workspace.id);
+    const workspaceState = await extractActiveSessionInfo(
+      workspace,
+      activeSessionRecord?.public_url ?? null,
+    );
     const passiveState = composeOpenClawPassiveState(
       workspaceState,
       hasDurableBootstrap,
@@ -1518,7 +1541,7 @@ async function createRuntime(): Promise<Runtime> {
     const startSessionStep = logTimedStepStart("startSession", {});
     const workspace = await workspaceOrThrow();
     let session = await getOrCreateActiveSession(workspace.id);
-    const activeSessionState = await extractActiveSessionInfo(workspace);
+    const activeSessionState = await extractActiveSessionInfo(workspace, session.public_url);
     const isRepair = Boolean(
       activeSessionState?.hasActiveSession && !activeSessionState.openclawUrl,
     );
@@ -1554,9 +1577,9 @@ async function createRuntime(): Promise<Runtime> {
             phase,
             activeSessionId: session.id,
             lastErrorAt: null,
-        });
-      },
-    );
+          });
+        },
+      );
       const isReady = await isOpenClawReady(startupResult.url);
       if (!isReady) {
         didFail = true;
