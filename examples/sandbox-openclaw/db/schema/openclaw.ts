@@ -18,4 +18,3 @@ export const openclawSessions = sqliteTable("openclaw_sessions", {
   updated_at: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   finished_at: integer("finished_at", { mode: "timestamp_ms" }),
 });
-

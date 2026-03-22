@@ -133,8 +133,9 @@ export default function Page() {
     <section className="panel">
       <h1 className="title">OpenClaw Control Plane</h1>
       <p className="subtitle">
-        One workspace, one durable bootstrap path, one live session for OpenClaw operations. Session
-        start revalidates bootstrap and repairs missing OpenClaw artifacts when possible.
+        One workspace, one durable bootstrap path, one live session for OpenClaw operations.
+        startSession acquires/starts the live session and surfaces public readiness in the phase
+        machine.
       </p>
 
       {!state.hasWorkspace ? (
@@ -193,7 +194,7 @@ export default function Page() {
                     disabled={busy === "startSession"}
                     onClick={() => void runAction("startSession")}
                   >
-                    {busy === "startSession" ? "Repairing..." : "Repair OpenClaw UI"}
+                    {busy === "startSession" ? "Starting..." : "Start OpenClaw UI"}
                   </button>
                 )}
                 <button
@@ -223,8 +224,10 @@ export default function Page() {
               </div>
               {!state.openclawUrl ? (
                 <p className="status">
-                  Active sandbox session found, but the public OpenClaw UI is not healthy. Repairing
-                  restarts the gateway inside the current session.
+                  {state.openclawPhase === "server_started" ||
+                  state.openclawPhase === "session_started"
+                    ? "Active sandbox session found, starting the UI with this session."
+                    : "Active sandbox session found, waiting for UI readiness before open."}
                 </p>
               ) : null}
               <CopyCommand value={state.connectCommand ?? `sandbox connect ${state.sandboxId}`} />
@@ -241,6 +244,12 @@ export default function Page() {
               </button>
             </div>
           )}
+
+          {state.openclawPhase === undefined ? (
+            <p className="status">
+              OpenClaw durable bootstrap state is invalid; unable to read a stable public phase.
+            </p>
+          ) : null}
         </section>
       )}
 

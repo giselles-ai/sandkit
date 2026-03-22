@@ -106,9 +106,7 @@ class VercelSandboxDriver implements SandboxDriver {
           stderr: await finished.stderr(),
         };
       },
-      logs: commandLogBroadcast
-        ? () => commandLogBroadcast()
-        : undefined,
+      logs: commandLogBroadcast ? () => commandLogBroadcast() : undefined,
     };
   }
 

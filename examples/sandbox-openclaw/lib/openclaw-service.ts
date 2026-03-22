@@ -13,18 +13,13 @@ import {
 } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
 
-import {
-  openclawSessions,
-  sandkitPolicies,
-  sandkitRuns,
-  sandkitWorkspaces,
-} from "../db/schema";
+import { openclawSessions, sandkitPolicies, sandkitRuns, sandkitWorkspaces } from "../db/schema";
 
 export type OpenClawState = {
   hasWorkspace: boolean;
   workspaceId?: string;
   hasActiveSession: boolean;
-  openclawPhase?: OpenClawSessionPhase;
+  openclawPhase?: OpenClawPublicPhase;
   sandboxId?: string;
   openclawUrl?: string;
   remainingMs?: number;
@@ -32,19 +27,35 @@ export type OpenClawState = {
   connectCommand?: string;
 };
 
-type OpenClawSessionPhase =
+type OpenClawSessionRecordPhase =
   | "bootstrapping"
   | "bootstrapped"
-  | "starting_gateway"
+  | "session_started"
+  | "server_starting"
   | "ready"
   | "degraded"
   | "repairing"
-  | "failed"
-  | "committed";
+  | "failed";
+
+type OpenClawPublicPhase = "bootstrapped" | "session_started" | "server_started" | "ready";
+
+const DURABLE_OPENCLAW_BOOTSTRAP_PHASES: readonly OpenClawSessionRecordPhase[] = [
+  "bootstrapped",
+  "ready",
+] as const;
+
+const RESUMABLE_OPENCLAW_SESSION_PHASES: readonly OpenClawSessionRecordPhase[] = [
+  "bootstrapped",
+  "degraded",
+  "repairing",
+  "ready",
+  "session_started",
+  "server_starting",
+] as const;
 
 type OpenClawMetadataSummary = {
   version: number;
-  phase: OpenClawSessionPhase;
+  phase: OpenClawPublicPhase;
   activeSessionId: string | null;
   lastErrorAt: string | null;
   bootstrapVersion: number | null;
@@ -133,16 +144,25 @@ function isWorkspaceMetadata(value: unknown): value is WorkspaceMetadata {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isOpenClawSessionPhase(value: unknown): value is OpenClawSessionPhase {
+function isOpenClawSessionRecordPhase(value: unknown): value is OpenClawSessionRecordPhase {
   return (
     value === "bootstrapping" ||
     value === "bootstrapped" ||
-    value === "starting_gateway" ||
+    value === "session_started" ||
+    value === "server_starting" ||
     value === "ready" ||
     value === "degraded" ||
     value === "repairing" ||
-    value === "failed" ||
-    value === "committed"
+    value === "failed"
+  );
+}
+
+function isOpenClawPublicPhase(value: unknown): value is OpenClawPublicPhase {
+  return (
+    value === "bootstrapped" ||
+    value === "session_started" ||
+    value === "server_started" ||
+    value === "ready"
   );
 }
 
@@ -158,7 +178,7 @@ function isOpenClawMetadataSummary(value: unknown): value is OpenClawMetadataSum
   }
 
   const phase = metadata.phase;
-  if (!isOpenClawSessionPhase(phase)) {
+  if (!isOpenClawPublicPhase(phase)) {
     return false;
   }
 
@@ -224,9 +244,93 @@ function parseWorkspaceMetadata(raw: unknown): WorkspaceMetadata {
   return parsed;
 }
 
+export function deriveOpenClawPhaseForPassiveRead(
+  activeState: Pick<OpenClawState, "hasActiveSession" | "openclawUrl"> | null,
+  hasDurableBootstrap: boolean,
+  inProgressPublicPhase: OpenClawPublicPhase | undefined,
+): OpenClawPublicPhase | undefined {
+  if (activeState?.hasActiveSession) {
+    if (activeState.openclawUrl) {
+      return "ready";
+    }
+
+    if (
+      (inProgressPublicPhase === "session_started" || inProgressPublicPhase === "server_started") &&
+      hasDurableBootstrap
+    ) {
+      return inProgressPublicPhase;
+    }
+
+    if (hasDurableBootstrap) {
+      return "bootstrapped";
+    }
+  }
+
+  return hasDurableBootstrap ? "bootstrapped" : undefined;
+}
+
+export function composeOpenClawPassiveState(
+  workspaceState: Pick<
+    OpenClawState,
+    | "hasActiveSession"
+    | "sandboxId"
+    | "openclawUrl"
+    | "remainingMs"
+    | "expiresAt"
+    | "connectCommand"
+  > | null,
+  hasDurableBootstrap: boolean,
+  inProgressPublicPhase?: OpenClawPublicPhase,
+): Pick<
+  OpenClawState,
+  | "openclawPhase"
+  | "hasActiveSession"
+  | "sandboxId"
+  | "openclawUrl"
+  | "remainingMs"
+  | "expiresAt"
+  | "connectCommand"
+> {
+  const openclawPhase = deriveOpenClawPhaseForPassiveRead(
+    workspaceState,
+    hasDurableBootstrap,
+    inProgressPublicPhase,
+  );
+
+  if (!workspaceState) {
+    return {
+      hasActiveSession: false,
+      openclawPhase,
+    };
+  }
+
+  return {
+    hasActiveSession: workspaceState.hasActiveSession,
+    openclawPhase,
+    sandboxId: workspaceState.sandboxId,
+    openclawUrl: workspaceState.openclawUrl,
+    remainingMs: workspaceState.remainingMs,
+    expiresAt: workspaceState.expiresAt,
+    connectCommand: workspaceState.connectCommand,
+  };
+}
+
+export function isOpenClawSessionRecordReusableForStart(
+  session: Pick<OpenClawSessionRecord, "phase" | "finished_at">,
+): boolean {
+  if (session.finished_at !== null) {
+    return false;
+  }
+
+  return (
+    isOpenClawSessionRecordPhase(session.phase) &&
+    RESUMABLE_OPENCLAW_SESSION_PHASES.includes(session.phase)
+  );
+}
+
 function makeSummary(
   workspaceMetadata: WorkspaceMetadata,
-  phase: OpenClawSessionPhase,
+  phase: OpenClawPublicPhase,
   activeSessionId: string | null,
   lastErrorAt: string | null,
 ): WorkspaceMetadata {
@@ -433,9 +537,7 @@ async function readBootstrapStatusWithSession(
   return result.exitCode === 0;
 }
 
-async function readBootstrapStatusInWorkspace(
-  workspace: PublicWorkspaceHandle,
-): Promise<boolean> {
+async function readBootstrapStatusInWorkspace(workspace: PublicWorkspaceHandle): Promise<boolean> {
   const result = await workspace.sandbox.runCommand("bash", [
     "-lc",
     [
@@ -687,7 +789,7 @@ function randomToken(): string {
 }
 
 type OpenClawSessionUpdate = {
-  phase?: OpenClawSessionPhase;
+  phase?: OpenClawSessionRecordPhase;
   sandbox_id?: string | null;
   public_url?: string | null;
   last_healthy_at?: Date | null;
@@ -702,26 +804,93 @@ type UpdateOpenClawSessionRecord = (
   update: OpenClawSessionUpdate,
 ) => Promise<void>;
 
+function createProcessOutputCapture(label: string, maxChars = 8_000) {
+  let stdout = "";
+  let stderr = "";
+
+  const trim = (value: string) => value.slice(-maxChars);
+
+  return {
+    onStdout(chunk: string) {
+      stdout = trim(`${stdout}${chunk}`);
+      console.info(`[openclaw] ${label} stdout`, chunk);
+    },
+    onStderr(chunk: string) {
+      stderr = trim(`${stderr}${chunk}`);
+      console.error(`[openclaw] ${label} stderr`, chunk);
+    },
+    snapshot() {
+      return {
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+      };
+    },
+  };
+}
+
+function logTimedStepStart(step: string, context: Record<string, unknown> = {}) {
+  const startedAt = Date.now();
+  console.info(`[openclaw] ${step} start`, {
+    startedAt: new Date(startedAt).toISOString(),
+    ...context,
+  });
+
+  return {
+    success(extra: Record<string, unknown> = {}) {
+      console.info(`[openclaw] ${step} success`, {
+        finishedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+        ...context,
+        ...extra,
+      });
+    },
+    failure(error: unknown, extra: Record<string, unknown> = {}) {
+      console.error(`[openclaw] ${step} failure`, {
+        finishedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+        ...context,
+        ...extra,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  };
+}
+
 async function ensureGatewayRunning(
   workspace: PublicWorkspaceHandle,
   openclawSession: OpenClawSessionRecord,
   updateSession: UpdateOpenClawSessionRecord,
+  isRepair: boolean,
+  onProgress?: (phase: OpenClawPublicPhase) => Promise<void>,
 ): Promise<string> {
+  const ensureStep = logTimedStepStart("ensureGatewayRunning", {
+    workspaceId: workspace.id,
+    openclawSessionId: openclawSession.id,
+  });
   const existingLease = await workspace.sandbox.getActiveLease();
   const activeSession = existingLease
     ? await workspace.sandbox.attachSession()
     : await workspace.sandbox.openSession();
 
-  await updateSession(openclawSession.id, {
-    phase: "starting_gateway",
-    error_code: null,
-    error_message: null,
-    updated_at: new Date(),
+  const sessionUrlStep = logTimedStepStart("waitForSessionUrl", {
+    workspaceId: workspace.id,
+    openclawSessionId: openclawSession.id,
   });
-
   const url = await waitForSessionUrl(activeSession);
+  sessionUrlStep.success({ url });
   let bootstrapReady = await readBootstrapStatusWithSession(activeSession);
   if (!bootstrapReady) {
+    if (!isRepair) {
+      await updateSession(openclawSession.id, {
+        phase: "failed",
+        error_code: "bootstrap_missing",
+        error_message:
+          "OpenClaw bootstrap artifacts are missing and this start request is not a repair path.",
+        updated_at: new Date(),
+      });
+      throw new Error("OpenClaw bootstrap artifacts are missing from the session.");
+    }
+
     await updateSession(openclawSession.id, {
       phase: "repairing",
       error_code: "bootstrap_missing",
@@ -745,18 +914,67 @@ async function ensureGatewayRunning(
   await updateControlUiConfigForSession(activeSession, url);
 
   try {
+    if (onProgress) {
+      await onProgress("server_started");
+    }
+    const localProbeStep = logTimedStepStart("probeLocalGateway", {
+      workspaceId: workspace.id,
+      openclawSessionId: openclawSession.id,
+      phase: "server_starting",
+    });
+    await updateSession(openclawSession.id, {
+      phase: "server_starting",
+      error_code: null,
+      error_message: null,
+      updated_at: new Date(),
+    });
     await probeLocalGateway(activeSession);
+    localProbeStep.success();
   } catch {
+    await updateSession(openclawSession.id, {
+      phase: "server_starting",
+      error_code: null,
+      error_message: null,
+      updated_at: new Date(),
+    });
     await stopGatewayProcess(activeSession);
-    const command = await activeSession.startProcess("bash", ["-lc", OPENCLAW_LAUNCHER_PATH]);
+    if (onProgress) {
+      await onProgress("server_started");
+    }
+    const gatewayProcessOutput = createProcessOutputCapture(
+      `gateway bootstrap ${openclawSession.id}`,
+    );
+    const startGatewayStep = logTimedStepStart("startGatewayProcess", {
+      workspaceId: workspace.id,
+      openclawSessionId: openclawSession.id,
+      url,
+    });
+    const command = await activeSession.startProcess({
+      command: "bash",
+      args: ["-lc", OPENCLAW_LAUNCHER_PATH],
+      onStdout: (chunk) => {
+        gatewayProcessOutput.onStdout(chunk);
+      },
+      onStderr: (chunk) => {
+        gatewayProcessOutput.onStderr(chunk);
+      },
+    });
+    startGatewayStep.success({ processId: command.processId });
     void command.wait().catch(() => {
       /* readiness and diagnostics handle startup failures. */
     });
 
     try {
+      const restartedProbeStep = logTimedStepStart("probeLocalGateway", {
+        workspaceId: workspace.id,
+        openclawSessionId: openclawSession.id,
+        phase: "server_starting",
+      });
       await probeLocalGateway(activeSession);
+      restartedProbeStep.success();
     } catch (error) {
       const diagnostics = await collectGatewayDiagnostics(activeSession);
+      const processOutput = gatewayProcessOutput.snapshot();
       const message = error instanceof Error ? error.message : String(error);
       await updateSession(openclawSession.id, {
         phase: "failed",
@@ -765,14 +983,25 @@ async function ensureGatewayRunning(
         updated_at: new Date(),
       });
       throw new Error(
-        [message, diagnostics ? `Gateway diagnostics:\n${diagnostics}` : ""]
+        [
+          message,
+          processOutput.stdout ? `Gateway startup stdout:\n${processOutput.stdout}` : "",
+          processOutput.stderr ? `Gateway startup stderr:\n${processOutput.stderr}` : "",
+          diagnostics ? `Gateway diagnostics:\n${diagnostics}` : "",
+        ]
           .filter(Boolean)
           .join("\n\n"),
       );
     }
   }
 
+  const publicReadyStep = logTimedStepStart("waitForOpenClawReady", {
+    workspaceId: workspace.id,
+    openclawSessionId: openclawSession.id,
+    url,
+  });
   await waitForOpenClawReady(url);
+  publicReadyStep.success();
   const lease = await workspace.sandbox.getActiveLease();
   await updateSession(openclawSession.id, {
     phase: "ready",
@@ -784,6 +1013,7 @@ async function ensureGatewayRunning(
     updated_at: new Date(),
   });
 
+  ensureStep.success({ url, sandboxId: lease?.sandboxId ?? null });
   return url;
 }
 
@@ -878,7 +1108,9 @@ async function createRuntime(): Promise<Runtime> {
       metadata,
       update.phase ?? current.phase,
       update.activeSessionId ?? metadata.openclaw?.activeSessionId ?? null,
-      update.lastErrorAt === undefined ? metadata.openclaw?.lastErrorAt ?? null : update.lastErrorAt,
+      update.lastErrorAt === undefined
+        ? (metadata.openclaw?.lastErrorAt ?? null)
+        : update.lastErrorAt,
     );
 
     if (update.phase !== undefined) {
@@ -917,7 +1149,7 @@ async function createRuntime(): Promise<Runtime> {
 
   async function createOpenClawSession(
     workspaceId: string,
-    phase: OpenClawSessionPhase,
+    phase: OpenClawSessionRecordPhase,
   ): Promise<OpenClawSessionRecord> {
     const now = nowDate();
     const sessionId = randomToken();
@@ -960,7 +1192,9 @@ async function createRuntime(): Promise<Runtime> {
     return rows[0] ?? null;
   }
 
-  async function getLatestOpenClawSession(workspaceId: string): Promise<OpenClawSessionRecord | null> {
+  async function getLatestOpenClawSession(
+    workspaceId: string,
+  ): Promise<OpenClawSessionRecord | null> {
     const rows = await db
       .select()
       .from(openclawSessions)
@@ -971,7 +1205,9 @@ async function createRuntime(): Promise<Runtime> {
     return rows[0] ?? null;
   }
 
-  async function getLatestNonCommittedSession(workspaceId: string): Promise<OpenClawSessionRecord | null> {
+  async function getLatestUnfinishedSession(
+    workspaceId: string,
+  ): Promise<OpenClawSessionRecord | null> {
     const rows = await db
       .select()
       .from(openclawSessions)
@@ -980,7 +1216,7 @@ async function createRuntime(): Promise<Runtime> {
       .limit(10);
 
     for (const row of rows) {
-      if (row.phase !== "committed") {
+      if (row.finished_at === null) {
         return row;
       }
     }
@@ -988,17 +1224,22 @@ async function createRuntime(): Promise<Runtime> {
     return null;
   }
 
-  const resumablePhases: readonly OpenClawSessionPhase[] = [
-    "bootstrapped",
-    "degraded",
-    "repairing",
-    "ready",
-  ];
-  const isResumablePhase = (phase: string): phase is OpenClawSessionPhase =>
-    isOpenClawSessionPhase(phase) && resumablePhases.includes(phase);
+  async function hasDurableOpenClawBootstrap(workspaceId: string): Promise<boolean> {
+    const rows = await db
+      .select({ phase: openclawSessions.phase })
+      .from(openclawSessions)
+      .where(eq(openclawSessions.workspace_id, workspaceId))
+      .orderBy(desc(openclawSessions.started_at), desc(openclawSessions.id))
+      .limit(10);
 
-  const toOpenClawSessionPhase = (phase: string): OpenClawSessionPhase =>
-    isOpenClawSessionPhase(phase) ? phase : "failed";
+    return rows.some(({ phase }) => {
+      if (!isOpenClawSessionRecordPhase(phase)) {
+        return false;
+      }
+
+      return DURABLE_OPENCLAW_BOOTSTRAP_PHASES.includes(phase);
+    });
+  }
 
   async function getOrCreateActiveSession(workspaceId: string): Promise<OpenClawSessionRecord> {
     const latest = await getLatestOpenClawSession(workspaceId);
@@ -1015,7 +1256,7 @@ async function createRuntime(): Promise<Runtime> {
       });
     }
 
-    if (isResumablePhase(latest.phase)) {
+    if (isOpenClawSessionRecordReusableForStart(latest)) {
       return latest;
     }
 
@@ -1061,10 +1302,11 @@ async function createRuntime(): Promise<Runtime> {
       phase: "failed",
       error_code: "transition_failed",
       error_message: message,
+      finished_at: timestamp,
       updated_at: timestamp,
     });
     await updateOpenClawSummary(workspaceId, {
-      phase: "failed",
+      phase: "bootstrapped",
       activeSessionId: session.id,
       lastErrorAt: timestamp.toISOString(),
     });
@@ -1146,22 +1388,19 @@ async function createRuntime(): Promise<Runtime> {
       };
     }
 
-    const metadataSummary = await loadOpenClawSummary(workspace.id);
+    const hasDurableBootstrap = await hasDurableOpenClawBootstrap(workspace.id);
     const workspaceState = await extractActiveSessionInfo(workspace);
-    if (workspaceState) {
-      return {
-        hasWorkspace: true,
-        workspaceId: workspace.id,
-        openclawPhase: metadataSummary.phase,
-        ...workspaceState,
-      };
-    }
+    const workspaceSummary = await loadOpenClawSummary(workspace.id);
+    const passiveState = composeOpenClawPassiveState(
+      workspaceState,
+      hasDurableBootstrap,
+      workspaceSummary.phase,
+    );
 
     return {
       hasWorkspace: true,
       workspaceId: workspace.id,
-      openclawPhase: metadataSummary.phase,
-      hasActiveSession: false,
+      ...passiveState,
     };
   }
 
@@ -1174,7 +1413,7 @@ async function createRuntime(): Promise<Runtime> {
     const workspace = await runtime.createWorkspace({ id: WORKSPACE_ID, name: "openclaw-demo" });
     const session = await createOpenClawSession(workspace.id, "bootstrapping");
     await updateOpenClawSummary(workspace.id, {
-      phase: "bootstrapping",
+      phase: "bootstrapped",
       activeSessionId: session.id,
       lastErrorAt: null,
     });
@@ -1195,24 +1434,47 @@ async function createRuntime(): Promise<Runtime> {
   }
 
   async function startSession(): Promise<OpenClawState> {
+    const startSessionStep = logTimedStepStart("startSession", {});
     const workspace = await workspaceOrThrow();
     let session = await getOrCreateActiveSession(workspace.id);
-    const sessionPhase = toOpenClawSessionPhase(session.phase);
+    const activeSessionState = await extractActiveSessionInfo(workspace);
+    const isRepair = Boolean(
+      activeSessionState?.hasActiveSession && !activeSessionState.openclawUrl,
+    );
+    const nextStartPhase = "session_started";
+
+    await updateOpenClawSessionRecord(session.id, {
+      phase: nextStartPhase,
+      updated_at: new Date(),
+    });
     await updateOpenClawSummary(workspace.id, {
-      phase: sessionPhase,
+      phase: nextStartPhase,
       activeSessionId: session.id,
       lastErrorAt: null,
     });
+    let openclawUrl: string;
 
     try {
-      const openclawUrl = await ensureGatewayRunning(workspace, session, updateOpenClawSessionRecord);
+      openclawUrl = await ensureGatewayRunning(
+        workspace,
+        session,
+        updateOpenClawSessionRecord,
+        isRepair,
+        async (phase) => {
+          await updateOpenClawSummary(workspace.id, {
+            phase,
+            activeSessionId: session.id,
+            lastErrorAt: null,
+          });
+        },
+      );
       const isReady = await isOpenClawReady(openclawUrl);
       if (!isReady) {
-        await updateOpenClawSummary(workspace.id, {
-          phase: "degraded",
-          activeSessionId: session.id,
-          lastErrorAt: new Date().toISOString(),
-        });
+        await markSessionFailure(
+          workspace.id,
+          session,
+          "OpenClaw UI is not publicly reachable after startup.",
+        );
       } else {
         await updateOpenClawSummary(workspace.id, {
           phase: "ready",
@@ -1221,6 +1483,10 @@ async function createRuntime(): Promise<Runtime> {
         });
       }
     } catch (error) {
+      startSessionStep.failure(error, {
+        workspaceId: workspace.id,
+        openclawSessionId: session.id,
+      });
       await markSessionFailure(
         workspace.id,
         session,
@@ -1228,7 +1494,23 @@ async function createRuntime(): Promise<Runtime> {
       );
     }
 
-    return getState();
+    const getStateStep = logTimedStepStart("startSession.getState", {
+      workspaceId: workspace.id,
+      openclawSessionId: session.id,
+    });
+    const nextState = await getState();
+    getStateStep.success({
+      hasActiveSession: nextState.hasActiveSession,
+      sandboxId: nextState.sandboxId ?? null,
+      openclawUrl: nextState.openclawUrl ?? null,
+    });
+    startSessionStep.success({
+      workspaceId: workspace.id,
+      openclawSessionId: session.id,
+      hasActiveSession: nextState.hasActiveSession,
+      sandboxId: nextState.sandboxId ?? null,
+    });
+    return nextState;
   }
 
   async function extendSession(durationMs: number): Promise<OpenClawState> {
@@ -1259,7 +1541,7 @@ async function createRuntime(): Promise<Runtime> {
     const resolvedSession = summary.activeSessionId
       ? await getOpenClawSessionById(summary.activeSessionId)
       : null;
-    const activeSession = resolvedSession ?? (await getLatestNonCommittedSession(workspace.id));
+    const activeSession = resolvedSession ?? (await getLatestUnfinishedSession(workspace.id));
 
     if (!activeSession) {
       throw new Error("No active OpenClaw session exists to commit.");
@@ -1271,12 +1553,11 @@ async function createRuntime(): Promise<Runtime> {
 
     const finishAt = nowDate();
     await updateOpenClawSessionRecord(activeSession.id, {
-      phase: "committed",
       finished_at: finishAt,
       updated_at: finishAt,
     });
     await updateOpenClawSummary(workspace.id, {
-      phase: "committed",
+      phase: "bootstrapped",
       activeSessionId: null,
       lastErrorAt: null,
     });

@@ -98,12 +98,8 @@
           "name": "openclaw_sessions_workspace_id_sandkit_workspaces_id_fk",
           "tableFrom": "openclaw_sessions",
           "tableTo": "sandkit_workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["workspace_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -157,12 +153,8 @@
           "name": "sandkit_policies_workspace_id_sandkit_workspaces_id_fk",
           "tableFrom": "sandkit_policies",
           "tableTo": "sandkit_workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["workspace_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -279,12 +271,8 @@
           "name": "sandkit_runs_workspace_id_sandkit_workspaces_id_fk",
           "tableFrom": "sandkit_runs",
           "tableTo": "sandkit_workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["workspace_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
