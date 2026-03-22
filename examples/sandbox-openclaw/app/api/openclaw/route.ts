@@ -5,7 +5,7 @@ import { performAction, readState, type OpenClawState } from "@/lib/openclaw-ser
 export const dynamic = "force-dynamic";
 
 type ActionPayload = {
-  action: "createWorkspace" | "startSession" | "extendSession" | "commitSession";
+  action: "createWorkspace" | "extendSession" | "commitSession";
   durationMs?: number;
 };
 
@@ -31,7 +31,6 @@ export async function POST(req: NextRequest) {
     const parsed = (await req.json()) as ActionPayload;
     if (
       parsed.action !== "createWorkspace" &&
-      parsed.action !== "startSession" &&
       parsed.action !== "extendSession" &&
       parsed.action !== "commitSession"
     ) {

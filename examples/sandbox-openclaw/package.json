@@ -19,7 +19,8 @@
     "next": "16.1.7",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "sandkit": "workspace:*"
+    "sandkit": "workspace:*",
+    "workflow": "^4.2.0-beta.71"
   },
   "devDependencies": {
     "@types/bun": "latest",

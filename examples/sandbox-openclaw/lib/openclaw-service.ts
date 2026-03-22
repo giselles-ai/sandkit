@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +38,29 @@ type OpenClawSessionRecordPhase =
   | "repairing"
   | "failed";
 
-type OpenClawPublicPhase = "bootstrapped" | "session_started" | "server_started" | "ready";
+export type OpenClawPublicPhase = "bootstrapped" | "session_started" | "server_started" | "ready";
+
+export type OpenClawStartProgressPhase = "session_started" | "server_started" | "ready";
+
+type OpenClawStartStep = "resolve_start_attempt" | "ensure_gateway_running" | "public_ready";
+
+export type OpenClawStartProgress = {
+  onPhase?: (
+    phase: OpenClawStartProgressPhase,
+    details: {
+      openclawSessionId?: string;
+      sandboxId?: string;
+      message?: string;
+      ts?: string;
+    },
+  ) => Promise<void> | void;
+  onStep?: (input: {
+    step: OpenClawStartStep;
+    status: "started" | "completed";
+    detail?: string;
+    ts?: string;
+  }) => Promise<void> | void;
+};
 
 const DURABLE_OPENCLAW_BOOTSTRAP_PHASES: readonly OpenClawSessionRecordPhase[] = [
   "bootstrapped",
@@ -87,7 +110,13 @@ const DEFAULT_PORT = 18_789;
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_WORKSPACE_ID = "openclaw-production";
 const CONTROL_UI_BOOTSTRAP_PATH = "/__openclaw/control-ui-config.json";
-const EXAMPLE_ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const SOURCE_EXAMPLE_ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const CWD_EXAMPLE_ROOT_DIR = process.cwd().endsWith("/examples/sandbox-openclaw")
+  ? process.cwd()
+  : join(process.cwd(), "examples", "sandbox-openclaw");
+const EXAMPLE_ROOT_DIR = existsSync(join(CWD_EXAMPLE_ROOT_DIR, "drizzle.config.ts"))
+  ? CWD_EXAMPLE_ROOT_DIR
+  : SOURCE_EXAMPLE_ROOT_DIR;
 const DATA_DIR = join(EXAMPLE_ROOT_DIR, "data");
 
 const WORKSPACE_ID = process.env.OPENCLAW_WORKSPACE_ID ?? DEFAULT_WORKSPACE_ID;
@@ -108,7 +137,10 @@ type Runtime = {
   readonly workspace: () => Promise<PublicWorkspaceHandle | null>;
   readonly getState: () => Promise<OpenClawState>;
   readonly createWorkspace: () => Promise<OpenClawState>;
-  readonly startSession: () => Promise<OpenClawState>;
+  readonly startSession: (
+    durationMs?: number,
+    progress?: OpenClawStartProgress,
+  ) => Promise<OpenClawState>;
   readonly extendSession: (durationMs: number) => Promise<OpenClawState>;
   readonly commitSession: () => Promise<OpenClawState>;
 };
@@ -877,7 +909,7 @@ async function ensureGatewayRunning(
   openclawSession: OpenClawSessionRecord,
   updateSession: UpdateOpenClawSessionRecord,
   isRepair: boolean,
-  onProgress?: (phase: OpenClawPublicPhase) => Promise<void>,
+  onProgress?: (phase: OpenClawStartProgressPhase) => Promise<void>,
 ): Promise<{
   url: string;
   lease: NonNullable<Awaited<ReturnType<PublicWorkspaceHandle["sandbox"]["getActiveLease"]>>>;
@@ -899,6 +931,9 @@ async function ensureGatewayRunning(
     attachedExisting,
     sandboxId: existingLease?.sandboxId ?? null,
   });
+  if (onProgress) {
+    await onProgress("session_started");
+  }
 
   const sessionUrlStep = logTimedStepStart("waitForSessionUrl", {
     workspaceId: workspace.id,
@@ -981,6 +1016,9 @@ async function ensureGatewayRunning(
       error_message: null,
       updated_at: new Date(),
     });
+    if (onProgress) {
+      await onProgress("server_started");
+    }
     await stopGatewayProcess(activeSession);
     const gatewayProcessOutput = createProcessOutputCapture(
       `gateway bootstrap ${openclawSession.id}`,
@@ -1041,21 +1079,12 @@ async function ensureGatewayRunning(
   };
 
   try {
-    if (onProgress) {
-      await onProgress("server_started");
-    }
     if (!isRepair && attachedExisting) {
       const localProbeStep = logTimedStepStart("probeLocalGateway", {
         workspaceId: workspace.id,
         openclawSessionId: openclawSession.id,
         phase: "server_starting",
         attempt: "initial",
-      });
-      await updateSession(openclawSession.id, {
-        phase: "server_starting",
-        error_code: null,
-        error_message: null,
-        updated_at: new Date(),
       });
       await probeLocalGateway(activeSession);
       localProbeStep.success();
@@ -1537,25 +1566,41 @@ async function createRuntime(): Promise<Runtime> {
     return getState();
   }
 
-  async function startSession(): Promise<OpenClawState> {
+  async function startSession(
+    durationMs?: number,
+    progress?: OpenClawStartProgress,
+  ): Promise<OpenClawState> {
+    const safeDurationMs = parsePositiveInteger(durationMs ?? 0, 0);
     const startSessionStep = logTimedStepStart("startSession", {});
+    const emitPhase: OpenClawStartProgress["onPhase"] = async (phase, details) => {
+      if (progress?.onPhase) {
+        await progress.onPhase(phase, { ...details, ts: new Date().toISOString() });
+      }
+    };
+    const emitStep: OpenClawStartProgress["onStep"] = async (input) => {
+      if (progress?.onStep) {
+        await progress.onStep({ ...input, ts: new Date().toISOString() });
+      }
+    };
     const workspace = await workspaceOrThrow();
     let session = await getOrCreateActiveSession(workspace.id);
     const activeSessionState = await extractActiveSessionInfo(workspace, session.public_url);
     const isRepair = Boolean(
       activeSessionState?.hasActiveSession && !activeSessionState.openclawUrl,
     );
-    const nextStartPhase = "session_started";
-
     await updateOpenClawSessionRecord(session.id, {
-      phase: nextStartPhase,
+      phase: "bootstrapped",
       updated_at: new Date(),
     });
     await updateOpenClawSummary(workspace.id, {
-      phase: nextStartPhase,
+      phase: "bootstrapped",
       activeSessionId: session.id,
       lastErrorAt: null,
     });
+    await emitStep({ step: "resolve_start_attempt", status: "started" });
+    await emitStep({ step: "resolve_start_attempt", status: "completed" });
+    await emitStep({ step: "ensure_gateway_running", status: "started" });
+
     let startupResult:
       | {
           url: string;
@@ -1573,6 +1618,7 @@ async function createRuntime(): Promise<Runtime> {
         updateOpenClawSessionRecord,
         isRepair,
         async (phase) => {
+          await emitPhase(phase, { openclawSessionId: session.id });
           await updateOpenClawSummary(workspace.id, {
             phase,
             activeSessionId: session.id,
@@ -1610,6 +1656,8 @@ async function createRuntime(): Promise<Runtime> {
 
     let nextState: OpenClawState;
     if (!didFail && startupResult) {
+      await emitStep({ step: "ensure_gateway_running", status: "completed" });
+      await emitStep({ step: "public_ready", status: "started" });
       const token = await readSessionToken(await workspace.sandbox.attachSession());
       nextState = {
         hasWorkspace: true,
@@ -1624,7 +1672,14 @@ async function createRuntime(): Promise<Runtime> {
           ? `${startupResult.url}#token=${encodeURIComponent(token)}`
           : startupResult.url,
       };
+      await emitStep({ step: "public_ready", status: "completed" });
+      await emitPhase("ready", {
+        openclawSessionId: session.id,
+        sandboxId: startupResult.lease.sandboxId,
+        message: `OpenClaw started on session ${session.id}.`,
+      });
     } else {
+      await emitStep({ step: "ensure_gateway_running", status: "completed" });
       const getStateStep = logTimedStepStart("startSession.getState", {
         workspaceId: workspace.id,
         openclawSessionId: session.id,
@@ -1635,6 +1690,15 @@ async function createRuntime(): Promise<Runtime> {
         sandboxId: nextState.sandboxId ?? null,
         openclawUrl: nextState.openclawUrl ?? null,
       });
+    }
+
+    if (safeDurationMs > 0 && startupResult?.lease) {
+      const extraMs = safeDurationMs - startupResult.lease.remainingMs;
+      if (extraMs > 0) {
+        await withActiveSession(workspace, async (openclawSession) => {
+          await openclawSession.extendTimeout(extraMs);
+        });
+      }
     }
 
     startSessionStep.success({
