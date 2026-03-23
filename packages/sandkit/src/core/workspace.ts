@@ -1,3 +1,4 @@
+import { allowAll } from "../policies/dsl.ts";
 import type {
   RunFinishInput as AdapterRunFinishInput,
   SandboxDriver,
@@ -20,7 +21,6 @@ import {
   describeWorkspacePolicyId,
   readWorkspacePolicy,
 } from "./workspace-policy.ts";
-import { allowAll } from "../policies/dsl.ts";
 import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
 import {
   isWorkspaceSessionStateExpired,

@@ -1,9 +1,6 @@
 import type { SandkitOptions, WorkspaceCreateInput } from "../types.ts";
 import { createSandkitContext, type SandkitContext } from "./context.ts";
-import {
-  asWorkspacePolicyMetadata,
-  removeWorkspacePolicyMetadata,
-} from "./workspace-policy.ts";
+import { asWorkspacePolicyMetadata, removeWorkspacePolicyMetadata } from "./workspace-policy.ts";
 import { type PublicWorkspaceHandle, WorkspaceHandle } from "./workspace.ts";
 
 export class Sandkit {

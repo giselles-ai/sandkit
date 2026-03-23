@@ -42,7 +42,9 @@ export function asWorkspacePolicyMetadata(policy: WorkspacePolicy): WorkspaceMet
   };
 }
 
-export function removeWorkspacePolicyMetadata(metadata?: WorkspaceMetadata | undefined): WorkspaceMetadata | undefined {
+export function removeWorkspacePolicyMetadata(
+  metadata?: WorkspaceMetadata | undefined,
+): WorkspaceMetadata | undefined {
   if (!metadata || typeof metadata !== "object") {
     return metadata;
   }
