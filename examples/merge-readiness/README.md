@@ -19,7 +19,7 @@ The app also lets operators monitor and resume ongoing investigations.
 
 1. **Top page**: `request a merge-readiness review` from a PR URL.
 2. **Runtime orchestration**:
-   - **Durable phase** (`runCommand()`): fetch PR metadata, run baseline checks, download/extract the PR head tarball, bootstrap the Codex CLI, and prepare the workspace.
+   - **Durable phase** (`runCommand()`): fetch PR metadata, run baseline checks, download/extract the PR head tarball, and prepare the workspace.
    - **Live phase** (`openSession()` + `startProcess()`): execute `codex` (`--yolo --json --skip-git-repo-check`) and write structured decision output.
 3. **Post-run resolution**: read decision JSON and persist review/session state.
 4. **Review and Workspace pages**: inspect evidence and status, run additional passes.
@@ -59,7 +59,8 @@ bun run dev
 You must have:
 
 - GitHub/Codex access available for the sandbox environment via Sandkit policy.
-- `codex` CLI installed in the execution environment.
+- bootstrap-time network access for shared Sandkit setup to install `@openai/codex`
+- `@openai/codex` CLI is installed by shared Sandkit setup (`setup` option in `examples/merge-readiness/lib/merge-readiness-app.ts`) and reused across workspaces.
 
 ## Environment Variables
 
@@ -67,7 +68,7 @@ Required for real investigations:
 
 - `CODEX_API_KEY`
   - Used by the built-in Codex policy and by `codex exec` during the live investigation phase.
-  - The example bootstraps the `@openai/codex` CLI durably before opening the live session.
+  - The example verifies the shared setup-installed `@openai/codex` CLI before invoking it.
 
 Optional:
 

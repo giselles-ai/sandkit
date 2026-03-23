@@ -18,6 +18,11 @@ export type SharedSetupStateValue =
 export interface SharedSetup {
   readonly command: string;
   readonly args?: readonly string[];
+  /**
+   * Shared setup state is durable and reused across workspaces, so this policy
+   * must also be durable. Explicit secret-bearing policies are rejected.
+   */
+  readonly policy?: WorkspacePolicy;
 }
 
 /**

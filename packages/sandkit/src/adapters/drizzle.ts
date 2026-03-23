@@ -545,7 +545,7 @@ export function drizzleAdapter<
             .update(resolvedSetupStates as object)
             .set({
               state: JSON.stringify(input.state),
-              updatedAt: now,
+              updatedAt: toDriverTimestamp(now),
             })
             .where(eq(resolvedSetupStates.id, input.id));
 
@@ -560,8 +560,8 @@ export function drizzleAdapter<
         await db.insert(resolvedSetupStates as object).values({
           id: input.id,
           state: JSON.stringify(input.state),
-          createdAt: now,
-          updatedAt: now,
+          createdAt: toDriverTimestamp(now),
+          updatedAt: toDriverTimestamp(now),
         });
 
         return {
