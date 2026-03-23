@@ -20,6 +20,23 @@ describe("workflow stream helpers", () => {
 });
 
 describe("OpenClaw workflow run display derivation", () => {
+  test("keeps create-workspace step messages while bootstrap is in progress", () => {
+    const display = deriveRunDisplayState([
+      {
+        index: 0,
+        type: "step",
+        step: "prepare_workspace",
+        status: "started",
+        ts: "2026-03-23T00:00:00.000Z",
+        detail: "Preparing workspace",
+      },
+    ]);
+
+    expect(display.phase).toBeUndefined();
+    expect(display.step).toBe("prepare_workspace");
+    expect(display.lastMessage).toBe("Preparing workspace");
+  });
+
   test("uses latest phase when it is the most recent terminal event", () => {
     const display = deriveRunDisplayState([
       {
@@ -64,6 +81,7 @@ describe("OpenClaw workflow run display derivation", () => {
         type: "result",
         ts: "2026-03-22T00:00:01.000Z",
         finalOutput: {
+          kind: "startSession",
           sandboxId: "sbx_123",
         },
       },
@@ -71,6 +89,24 @@ describe("OpenClaw workflow run display derivation", () => {
 
     expect(display.phase).toBe("ready");
     expect(display.step).toBeUndefined();
+  });
+
+  test("create-workspace result renders as workspace created, not ready", () => {
+    const display = deriveRunDisplayState([
+      {
+        index: 0,
+        type: "result",
+        ts: "2026-03-22T00:00:01.000Z",
+        finalOutput: {
+          kind: "createWorkspace",
+          workspaceId: "openclaw-production",
+        },
+      },
+    ]);
+
+    expect(display.phase).toBeUndefined();
+    expect(display.step).toBeUndefined();
+    expect(display.lastMessage).toBe("workspace created");
   });
 
   test("uses error message over prior readiness", () => {

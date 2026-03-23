@@ -15,6 +15,7 @@ const OPENCLAW_CONFIG_PATH = `${OPENCLAW_CONFIG_DIR}/openclaw.json`;
 const OPENCLAW_LOG_PATH = `${OPENCLAW_CONFIG_DIR}/gateway.log`;
 const NODE_BIN_DIR = "/vercel/runtimes/node24/bin";
 const CONTROL_UI_BOOTSTRAP_PATH = "/__openclaw/control-ui-config.json";
+export const OPENCLAW_STARTUP_LEASE_CUSHION_MS = 180_000;
 
 export type OpenClawSandboxConfig = {
   installSpec: string;
@@ -552,7 +553,7 @@ export async function ensureGatewayRunning(
   openclawSession: OpenClawSessionRecord,
   updateSession: OpenClawSessionUpdateFn,
   options: OpenClawSandboxConfig,
-  isRepair: boolean,
+  requiredLeaseMs: number,
   onProgress?: (phase: OpenClawStartProgressPhase) => Promise<void>,
 ): Promise<{
   url: string;
@@ -572,11 +573,18 @@ export async function ensureGatewayRunning(
   const activeSession = existingLease
     ? await workspace.sandbox.attachSession()
     : await workspace.sandbox.openSession();
+  const sessionLease = existingLease ?? (await workspace.sandbox.getActiveLease());
 
   sessionResolutionStep.success({
     attachedExisting,
     sandboxId: existingLease?.sandboxId ?? null,
   });
+  if (requiredLeaseMs > 0 && sessionLease) {
+    const extendByMs = requiredLeaseMs - sessionLease.remainingMs;
+    if (extendByMs > 0) {
+      await activeSession.extendTimeout(extendByMs);
+    }
+  }
   if (onProgress) {
     await onProgress("session_started");
   }
@@ -594,26 +602,13 @@ export async function ensureGatewayRunning(
   });
   let bootstrapReady = await readBootstrapStatusWithSession(activeSession);
   bootstrapStatusStep.success({ bootstrapReady });
+  let didRepairBootstrap = false;
   if (!bootstrapReady) {
     const bootstrapRepairStep = logTimedStepStart("bootstrapRepair", {
       workspaceId: workspace.id,
       openclawSessionId: openclawSession.id,
       phase: "repairing",
-      isRepair,
     });
-    if (!isRepair) {
-      bootstrapRepairStep.failure(
-        new Error("OpenClaw bootstrap artifacts are missing and startup is not in repair mode."),
-      );
-      await updateSession(openclawSession.id, {
-        phase: "failed",
-        error_code: "bootstrap_missing",
-        error_message:
-          "OpenClaw bootstrap artifacts are missing and this start request is not a repair path.",
-        updated_at: new Date(),
-      });
-      throw new Error("OpenClaw bootstrap artifacts are missing from the session.");
-    }
 
     await updateSession(openclawSession.id, {
       phase: "repairing",
@@ -623,10 +618,12 @@ export async function ensureGatewayRunning(
     });
     await repairOpenClawInSession(activeSession, options);
     bootstrapReady = await readBootstrapStatusWithSession(activeSession);
+    didRepairBootstrap = true;
     bootstrapRepairStep.success({ bootstrapReady });
   }
 
   if (!bootstrapReady) {
+    const bootstrapRepairMode = didRepairBootstrap ? "repair attempt" : "initial bootstrap check";
     const finalBootstrapFailureStep = logTimedStepStart("bootstrapMissingFailure", {
       workspaceId: workspace.id,
       openclawSessionId: openclawSession.id,
@@ -634,13 +631,15 @@ export async function ensureGatewayRunning(
     await updateSession(openclawSession.id, {
       phase: "failed",
       error_code: "bootstrap_missing",
-      error_message: "OpenClaw bootstrap artifacts still missing after repair.",
+      error_message: `OpenClaw bootstrap artifacts are still missing for session ${openclawSession.id} after ${bootstrapRepairMode}.`,
       updated_at: new Date(),
     });
     finalBootstrapFailureStep.failure(
-      new Error("Bootstrap artifacts are still missing after repair."),
+      new Error(`OpenClaw bootstrap artifacts are still missing for session ${openclawSession.id} after ${bootstrapRepairMode}.`),
     );
-    throw new Error("OpenClaw bootstrap artifacts are missing from the workspace.");
+    throw new Error(
+      `OpenClaw bootstrap artifacts are still missing for session ${openclawSession.id} after ${bootstrapRepairMode}.`,
+    );
   }
 
   const controlUiConfigStep = logTimedStepStart("updateControlUiConfig", {
@@ -726,7 +725,7 @@ export async function ensureGatewayRunning(
   };
 
   try {
-    if (!isRepair && attachedExisting) {
+    if (!didRepairBootstrap && attachedExisting) {
       const localProbeStep = logTimedStepStart("probeLocalGateway", {
         workspaceId: workspace.id,
         openclawSessionId: openclawSession.id,
@@ -739,7 +738,7 @@ export async function ensureGatewayRunning(
       console.info("[openclaw] skipping initial localhost probe", {
         workspaceId: workspace.id,
         openclawSessionId: openclawSession.id,
-        isRepair,
+        didRepairBootstrap,
         attachedExisting,
       });
       await restartGatewayFromUnhealthyState();

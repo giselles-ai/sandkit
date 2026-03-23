@@ -1,6 +1,8 @@
 import type { OpenClawDisplayState, OpenClawRunEvent } from "@/lib/openclaw-workflow-steps";
 
 export type OpenClawRunFinalOutput = {
+  kind?: "createWorkspace" | "startSession";
+  workspaceId?: string;
   openclawSessionId?: string;
   sandboxId?: string;
   openclawUrl?: string;
@@ -80,6 +82,19 @@ export function applyRunEventToState(
   }
 
   if (event.type === "result") {
+    if (event.finalOutput.kind === "createWorkspace") {
+      return {
+        ...next,
+        status: "succeeded",
+        finalOutput: event.finalOutput,
+        display: {
+          phase: undefined,
+          step: undefined,
+          lastMessage: "workspace created",
+        },
+      };
+    }
+
     return {
       ...next,
       status: "succeeded",
