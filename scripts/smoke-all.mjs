@@ -42,6 +42,11 @@ const corruptionResult = run(
   "corruption smoke",
   { required: true },
 );
+const sharedSetupResult = run(
+  "bun run --cwd smoke/vercel-sandbox smoke:shared-setup",
+  "shared setup smoke",
+  { required: true },
+);
 let vercelResult = { ok: true, code: 0 };
 let codexExecResult = { ok: true, code: 0 };
 
@@ -74,6 +79,7 @@ const failed =
   !policyResult.ok ||
   !policyCredentialsResult.ok ||
   !corruptionResult.ok ||
+  !sharedSetupResult.ok ||
   !vercelResult.ok ||
   !codexExecResult.ok;
 if (failed) {

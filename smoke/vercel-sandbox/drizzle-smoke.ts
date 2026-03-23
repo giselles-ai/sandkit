@@ -25,6 +25,12 @@ function migrate(sqlite: Database): void {
       createdAt INTEGER NOT NULL,
       updatedAt INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS sandkit_setup_states (
+      id TEXT PRIMARY KEY NOT NULL,
+      state TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS sandkit_runs (
       id TEXT PRIMARY KEY NOT NULL,
       workspace_id TEXT NOT NULL,

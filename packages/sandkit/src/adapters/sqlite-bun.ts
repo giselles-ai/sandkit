@@ -6,9 +6,13 @@ import type {
   WorkspaceCreateInput,
   WorkspaceMetadata,
   WorkspaceRecord,
+  SharedSetupStateValue,
   WorkspaceUpdateInput,
   RunStatus,
   WorkspaceStatus,
+  SharedSetupState,
+  SetupStateRecord,
+  SetupStatePutInput,
   RunAdapter,
   RunCreateInput,
   RunFinishInput,
@@ -32,6 +36,13 @@ interface SqliteWorkspaceRow {
   status: WorkspaceStatus;
   sandboxId: string | null;
   lastResumedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SqliteSetupStateRow {
+  id: string;
+  state: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -98,6 +109,22 @@ function readProviderCommit(value: string | null): unknown {
   }
 
   return parseJsonColumn("sandkit_runs", "provider_commit", value);
+}
+
+function readWorkspaceSetupState(value: string): SharedSetupState {
+  const parsed = parseJsonColumn("sandkit_setup_states", "state", value);
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const candidate = parsed as { kind?: unknown; sessionId?: unknown; state?: unknown };
+    if (typeof candidate.kind === "string" && typeof candidate.sessionId === "string") {
+      return {
+        kind: candidate.kind,
+        sessionId: candidate.sessionId,
+        state: candidate.state as SharedSetupStateValue,
+      };
+    }
+  }
+
+  throw corruptionError("sandkit_setup_states", "state", "expected persisted sandbox state object");
 }
 
 function toRunRecord(row: SqliteRunRow): RunRecord {
@@ -274,6 +301,91 @@ function createPolicySnapshotStore(db: Database): PolicySnapshotAdapter {
   };
 }
 
+function createSqliteSetupStateStore(db: Database): {
+  getSetupState: (id: string) => Promise<SetupStateRecord | null>;
+  putSetupState: (input: SetupStatePutInput) => Promise<SetupStateRecord>;
+  deleteSetupState: (id: string) => Promise<void>;
+} {
+  const getCreatedAt = async (id: string): Promise<string | null> => {
+    const row = db
+      .query<{ createdAt: string }, [string]>(
+        `
+      SELECT createdAt
+      FROM sandkit_setup_states
+      WHERE id = ?
+      LIMIT 1
+      `,
+      )
+      .get(id);
+
+    return row ? row.createdAt : null;
+  };
+
+  return {
+    async getSetupState(id: string): Promise<SetupStateRecord | null> {
+      const row = db
+        .query<SqliteSetupStateRow, [string]>(
+          `
+          SELECT id, state, createdAt, updatedAt
+          FROM sandkit_setup_states
+          WHERE id = ?
+          LIMIT 1
+          `,
+        )
+        .get(id);
+
+      if (!row) {
+        return null;
+      }
+
+      const parsed = readWorkspaceSetupState(row.state);
+      return {
+        id: row.id,
+        state: parsed,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      };
+    },
+    async putSetupState(input: SetupStatePutInput): Promise<SetupStateRecord> {
+      const now = new Date().toISOString();
+      const existing = await getCreatedAt(input.id);
+      if (existing) {
+        db.query(
+          `
+          UPDATE sandkit_setup_states
+          SET state = ?, updatedAt = ?
+          WHERE id = ?
+          `,
+        ).run(toJsonString(input.state), now, input.id);
+
+        return {
+          id: input.id,
+          state: input.state,
+          createdAt: existing,
+          updatedAt: now,
+        };
+      }
+
+      db.query(
+        `
+        INSERT INTO sandkit_setup_states (id, state, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?)
+        `,
+      ).run(input.id, toJsonString(input.state), now, now);
+
+      return {
+        id: input.id,
+        state: input.state,
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
+    async deleteSetupState(id: string): Promise<void> {
+      db.query(`DELETE FROM sandkit_setup_states WHERE id = ?`).run(id);
+    },
+  };
+}
+
 class BunSqliteWorkspaceAdapter implements SandkitAdapter {
   readonly #db: Database;
 
@@ -300,6 +412,10 @@ class BunSqliteWorkspaceAdapter implements SandkitAdapter {
 
   get policySnapshots() {
     return createPolicySnapshotStore(this.#db);
+  }
+
+  get setupStates() {
+    return createSqliteSetupStateStore(this.#db);
   }
 
   async createWorkspace(input: WorkspaceCreateInput = {}): Promise<WorkspaceRecord> {
@@ -455,6 +571,14 @@ class BunSqliteWorkspaceAdapter implements SandkitAdapter {
         config TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY(workspace_id) REFERENCES sandkit_workspaces(id)
+      )
+    `);
+    this.#db.run(`
+      CREATE TABLE IF NOT EXISTS sandkit_setup_states (
+        id TEXT PRIMARY KEY NOT NULL,
+        state TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
       )
     `);
     this.#db.run(`

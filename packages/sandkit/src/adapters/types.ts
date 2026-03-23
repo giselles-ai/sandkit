@@ -7,6 +7,28 @@ export interface WorkspaceMetadata {
   [key: string]: unknown;
 }
 
+export type SharedSetupStateValue =
+  | null
+  | boolean
+  | number
+  | string
+  | SharedSetupStateValue[]
+  | { [key: string]: SharedSetupStateValue };
+
+export interface SharedSetup {
+  readonly command: string;
+  readonly args?: readonly string[];
+}
+
+/**
+ * Internal durable artifact produced by a successful shared bootstrap.
+ */
+export interface SharedSetupState {
+  readonly kind: string;
+  readonly sessionId: string;
+  readonly state?: SharedSetupStateValue;
+}
+
 export interface WorkspaceRecord {
   id: string;
   name?: string;
@@ -34,6 +56,24 @@ export interface WorkspaceUpdateInput {
   status?: WorkspaceStatus;
   sandboxId?: string | null;
   lastResumedAt?: string | null;
+}
+
+export interface SetupStateRecord {
+  readonly id: string;
+  readonly state: SharedSetupState;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface SetupStatePutInput {
+  readonly id: string;
+  readonly state: SharedSetupState;
+}
+
+export interface SetupStateAdapter {
+  getSetupState(id: string): Promise<SetupStateRecord | null>;
+  putSetupState(input: SetupStatePutInput): Promise<SetupStateRecord>;
+  deleteSetupState(id: string): Promise<void>;
 }
 
 export interface WorkspaceAdapter {
@@ -108,6 +148,7 @@ export interface PolicySnapshotAdapter {
 export interface SandkitAdapter {
   readonly id: string;
   readonly workspaces: WorkspaceAdapter;
+  readonly setupStates: SetupStateAdapter;
   readonly runs: RunAdapter;
   readonly policySnapshots: PolicySnapshotAdapter;
 }

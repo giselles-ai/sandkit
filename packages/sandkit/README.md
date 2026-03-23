@@ -77,6 +77,27 @@ await workspace.sandbox.runCommand({
 });
 ```
 
+## Setup bootstrap
+
+Pass setup to `sandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
+Each workspace starts from that shared bootstrap snapshot when no workspace-specific durable state exists.
+Sandkit persists one shared bootstrap state per adapter and bootstrap definition (command + args), runs setup once per unique bootstrap definition, and reuses the matching state for subsequent workspaces.
+If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and persists a replacement.
+
+```ts
+const app = sandkit({
+  setup: {
+    command: "sh",
+    args: ["-lc", "npm ci"],
+  },
+});
+
+const workspace = await app.createWorkspace({
+  // createWorkspace options remain workspace-specific
+  policy: allowServices([codex(), gemini()]),
+});
+```
+
 ## Policies
 
 - `codex()` reads `CODEX_API_KEY`

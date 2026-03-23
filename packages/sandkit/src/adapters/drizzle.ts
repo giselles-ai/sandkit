@@ -2,12 +2,21 @@ import { eq } from "drizzle-orm";
 import type { SQLWrapper } from "drizzle-orm";
 
 import { createId } from "../core/ids.ts";
-import { sandkitPolicyExport, sandkitRunExport, sandkitWorkspaceExport } from "../schema/model.ts";
+import {
+  sandkitPolicyExport,
+  sandkitRunExport,
+  sandkitSetupStateExport,
+  sandkitWorkspaceExport,
+} from "../schema/model.ts";
 import type {
   SandkitAdapter,
   WorkspaceCreateInput,
   WorkspaceRecord,
   WorkspaceMetadata,
+  SharedSetupState,
+  SharedSetupStateValue,
+  SetupStateRecord,
+  SetupStatePutInput,
   WorkspaceStatus,
   WorkspaceUpdateInput,
   RunCreateInput,
@@ -54,6 +63,13 @@ interface DrizzlePolicySnapshotTableShape {
   readonly created_at: unknown;
 }
 
+interface DrizzleSetupStateTableShape {
+  readonly id: SQLWrapper;
+  readonly state: unknown;
+  readonly createdAt: unknown;
+  readonly updatedAt: unknown;
+}
+
 interface DrizzleSchemaMap {
   [key: string]: unknown;
 }
@@ -78,6 +94,9 @@ interface DrizzleDatabaseLike {
       where(condition: unknown): Promise<unknown>;
     };
   };
+  delete(table: object): {
+    where(condition: unknown): Promise<unknown>;
+  };
   readonly _?: DrizzleMetadata;
 }
 
@@ -88,6 +107,13 @@ interface DrizzleWorkspaceRow {
   status: WorkspaceStatus;
   sandboxId: string | null;
   lastResumedAt: string | number | Date | null;
+  createdAt: string | number | Date;
+  updatedAt: string | number | Date;
+}
+
+interface DrizzleSetupStateRow {
+  id: string;
+  state: unknown;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
@@ -215,6 +241,30 @@ function readMetadata(value: unknown): WorkspaceRecord["metadata"] {
   throw corruptionError("sandkit_workspaces", "metadata", "expected JSON object");
 }
 
+function readSetupState(value: unknown): SharedSetupState {
+  const parsed = readJsonColumn("sandkit_setup_states", "state", value);
+  if (parsed === undefined) {
+    throw corruptionError(
+      "sandkit_setup_states",
+      "state",
+      "expected persisted sandbox state object",
+    );
+  }
+
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const candidate = parsed as { kind?: unknown; sessionId?: unknown; state?: unknown };
+    if (typeof candidate.kind === "string" && typeof candidate.sessionId === "string") {
+      return {
+        kind: candidate.kind,
+        sessionId: candidate.sessionId,
+        state: candidate.state as SharedSetupStateValue,
+      };
+    }
+  }
+
+  throw corruptionError("sandkit_setup_states", "state", "expected persisted sandbox state object");
+}
+
 function toWorkspaceRecord(row: DrizzleWorkspaceRow): WorkspaceRecord {
   return {
     id: row.id,
@@ -314,6 +364,30 @@ async function selectRunById<TRuns extends DrizzleRunTableShape>(
   return row ? toRunRecord(row) : null;
 }
 
+async function selectSetupStateById<TSetupStates extends DrizzleSetupStateTableShape>(
+  db: DrizzleDatabaseLike,
+  setupStates: TSetupStates,
+  id: string,
+): Promise<SetupStateRecord | null> {
+  const rows = await db
+    .select()
+    .from(setupStates as object)
+    .where(eq(setupStates.id, id))
+    .limit(1);
+
+  const row = rows[0] as DrizzleSetupStateRow | undefined;
+  return row ? toSetupStateRecord(row) : null;
+}
+
+function toSetupStateRecord(row: DrizzleSetupStateRow): SetupStateRecord {
+  return {
+    id: row.id,
+    state: readSetupState(row.state),
+    createdAt: toIsoTimestamp(row.createdAt),
+    updatedAt: toIsoTimestamp(row.updatedAt),
+  };
+}
+
 function resolveTable<TTable>(
   db: DrizzleDatabaseLike,
   override: TTable | undefined,
@@ -349,11 +423,13 @@ export interface DrizzleAdapterOptions<
   TWorkspaces extends DrizzleWorkspaceTableShape,
   TRuns extends DrizzleRunTableShape,
   TPolicySnapshots extends DrizzlePolicySnapshotTableShape,
+  TSetupStates extends DrizzleSetupStateTableShape = DrizzleSetupStateTableShape,
 > {
   provider: "sqlite" | "postgresql" | "mysql";
   workspaces?: TWorkspaces;
   runs?: TRuns;
   policySnapshots?: TPolicySnapshots;
+  setupStates?: TSetupStates;
   id?: string;
 }
 
@@ -361,9 +437,10 @@ export function drizzleAdapter<
   TWorkspaces extends DrizzleWorkspaceTableShape,
   TRuns extends DrizzleRunTableShape,
   TPolicySnapshots extends DrizzlePolicySnapshotTableShape,
+  TSetupStates extends DrizzleSetupStateTableShape = DrizzleSetupStateTableShape,
 >(
   db: DrizzleDatabaseLike,
-  options: DrizzleAdapterOptions<TWorkspaces, TRuns, TPolicySnapshots>,
+  options: DrizzleAdapterOptions<TWorkspaces, TRuns, TPolicySnapshots, TSetupStates>,
 ): SandkitAdapter {
   const resolvedWorkspaces = resolveTable(
     db,
@@ -377,6 +454,12 @@ export function drizzleAdapter<
     options.policySnapshots,
     sandkitPolicyExport,
     "sandkit_policies",
+  );
+  const resolvedSetupStates = resolveTable(
+    db,
+    options.setupStates,
+    sandkitSetupStateExport,
+    "sandkit_setup_states",
   );
   const adapterId = options.id ?? `drizzle-${options.provider}`;
 
@@ -446,6 +529,51 @@ export function drizzleAdapter<
           .where(eq(resolvedWorkspaces.id, id));
 
         return next;
+      },
+    },
+    setupStates: {
+      async getSetupState(id: string) {
+        return selectSetupStateById(db, resolvedSetupStates, id);
+      },
+
+      async putSetupState(input: SetupStatePutInput): Promise<SetupStateRecord> {
+        const now = new Date().toISOString();
+        const existing = await selectSetupStateById(db, resolvedSetupStates, input.id);
+
+        if (existing) {
+          await db
+            .update(resolvedSetupStates as object)
+            .set({
+              state: JSON.stringify(input.state),
+              updatedAt: now,
+            })
+            .where(eq(resolvedSetupStates.id, input.id));
+
+          return {
+            id: input.id,
+            state: input.state,
+            createdAt: existing.createdAt,
+            updatedAt: now,
+          };
+        }
+
+        await db.insert(resolvedSetupStates as object).values({
+          id: input.id,
+          state: JSON.stringify(input.state),
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        return {
+          id: input.id,
+          state: input.state,
+          createdAt: now,
+          updatedAt: now,
+        };
+      },
+
+      async deleteSetupState(id: string): Promise<void> {
+        await db.delete(resolvedSetupStates as object).where(eq(resolvedSetupStates.id, id));
       },
     },
     runs: {
