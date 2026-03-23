@@ -263,7 +263,7 @@ function buildSandboxReadyCommand(sandboxUrl: string): string {
 
 export async function isOpenClawReady(
   url: string,
-  options: OpenClawSandboxConfig,
+  _options: OpenClawSandboxConfig,
 ): Promise<boolean> {
   try {
     const response = await fetch(buildSandboxReadyCommand(url), { cache: "no-store" });
@@ -280,7 +280,7 @@ export async function isOpenClawReady(
 
 export async function waitForOpenClawReady(
   url: string,
-  options: OpenClawSandboxConfig,
+  _options: OpenClawSandboxConfig,
 ): Promise<void> {
   const readyUrl = buildSandboxReadyCommand(url);
 
