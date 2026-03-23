@@ -75,13 +75,12 @@ async function runOpenClawStartSessionStep(
 ): Promise<OpenClawStartFinalOutput> {
   "use step";
 
-  const { getRuntime } = await import("@/lib/openclaw-service");
-  const runtime = await getRuntime();
+  const { startSession } = await import("@/lib/openclaw-service");
   const writer = createEventWriter();
   let openclawSessionId: string | undefined;
 
   try {
-    const state = await runtime.startSession(input.durationMs, {
+    const state = await startSession(input.durationMs, {
       onStep: async ({ step, status, detail }) => {
         await writer.write({
           type: "step",

@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { performAction, readState, type OpenClawState } from "@/lib/openclaw-service";
+import {
+  commitSession,
+  createWorkspace,
+  extendSession,
+  readState,
+  type OpenClawState,
+} from "@/lib/openclaw-service";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +14,14 @@ type ActionPayload = {
   action: "createWorkspace" | "extendSession" | "commitSession";
   durationMs?: number;
 };
+
+function parseDurationMs(raw: number | undefined): number {
+  if (!Number.isFinite(raw ?? NaN) || raw === undefined) {
+    return 10 * 60_000;
+  }
+
+  return raw;
+}
 
 type StateResponse = {
   state: OpenClawState;
@@ -49,7 +63,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const state = await performAction(payload.action, payload.durationMs);
+    const state =
+      payload.action === "createWorkspace"
+        ? await createWorkspace()
+        : payload.action === "extendSession"
+          ? await extendSession(parseDurationMs(payload.durationMs))
+          : await commitSession();
     return responseFromState(state);
   } catch (error) {
     const message = error instanceof Error ? error.message : "request failed";
