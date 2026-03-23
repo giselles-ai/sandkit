@@ -1,4 +1,4 @@
-import type { SandkitAdapter, WorkspaceCreateInput, WorkspaceRecord } from "./adapters/types.ts";
+import type { SandkitAdapter, WorkspaceRecord } from "./adapters/types.ts";
 import type {
   PolicySnapshotAdapter,
   PolicySnapshotRecord,
@@ -8,6 +8,13 @@ import type {
   RunFinishInput,
   RunRecord,
   RunStatus,
+  SetupStateAdapter,
+  SetupStateRecord,
+  SetupStatePutInput,
+  WorkspaceMetadata,
+  SharedSetup,
+  SharedSetupState,
+  WorkspaceStatus,
 } from "./adapters/types.ts";
 import type { WorkspacePolicy } from "./policies/types.ts";
 
@@ -22,7 +29,6 @@ export type JsonValue =
 
 export type {
   SandkitAdapter,
-  WorkspaceCreateInput,
   WorkspaceRecord,
   RunAdapter,
   RunCreateInput,
@@ -32,8 +38,23 @@ export type {
   PolicySnapshotRecord,
   PolicySnapshotCreateInput,
   RunStatus,
+  SetupStateAdapter,
+  SetupStateRecord,
+  SetupStatePutInput,
+  SharedSetup,
+  SharedSetupState,
 };
 export type { WorkspacePolicy };
+
+export interface WorkspaceCreateOptions {
+  id?: string;
+  name?: string;
+  metadata?: WorkspaceMetadata;
+  policy?: WorkspacePolicy;
+  status?: WorkspaceStatus;
+  sandboxId?: string;
+  lastResumedAt?: string;
+}
 
 export interface CommandResult {
   exitCode: number;
@@ -134,6 +155,7 @@ export interface SandboxDriverFactory {
 
 export interface SandkitOptions {
   readonly database?: SandkitAdapter | undefined;
+  readonly setup?: SharedSetup | undefined;
   readonly network?: readonly unknown[] | undefined;
   readonly sandbox?:
     | {

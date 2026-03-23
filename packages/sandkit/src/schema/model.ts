@@ -46,6 +46,7 @@ const tablePrefix = "sandkit_";
 export const sandkitWorkspaceExport = "sandkitWorkspaces";
 export const sandkitRunExport = "sandkitRuns";
 export const sandkitPolicyExport = "sandkitPolicies";
+export const sandkitSetupStateExport = "sandkitSetupStates";
 
 export const sandkitWorkspaceTable: SandkitTable = {
   name: `${tablePrefix}workspaces`,
@@ -185,11 +186,34 @@ export const sandkitPolicyTable: SandkitTable = {
   indexes: [{ name: "policies_workspace_id_idx", columns: ["workspace_id"] }],
 };
 
+export const sandkitSetupStateTable: SandkitTable = {
+  name: `${tablePrefix}setup_states`,
+  exportName: sandkitSetupStateExport,
+  comment: "Durable shared setup state shared by all workspaces on one adapter.",
+  columns: [
+    {
+      name: "id",
+      type: "text",
+      primaryKey: true,
+      nullable: false,
+      comment: "Shared setup state identifier.",
+    },
+    {
+      name: "state",
+      type: "json",
+      nullable: false,
+      comment: "Serialized durable setup snapshot state.",
+    },
+    { name: "createdAt", type: "timestamp", nullable: false },
+    { name: "updatedAt", type: "timestamp", nullable: false },
+  ],
+};
+
 export function createSandkitSchemaModel(dialect: SandkitDialect = "sqlite"): SandkitSchemaModel {
   const schemaName = dialect === "postgresql" ? `${baseSchemaName}_schema` : baseSchemaName;
   return {
     name: schemaName,
-    version: 2,
+    version: 4,
     dialect,
     tables: [
       {
@@ -202,6 +226,10 @@ export function createSandkitSchemaModel(dialect: SandkitDialect = "sqlite"): Sa
       },
       {
         ...sandkitPolicyTable,
+        schema: dialect === "postgresql" ? "public" : undefined,
+      },
+      {
+        ...sandkitSetupStateTable,
         schema: dialect === "postgresql" ? "public" : undefined,
       },
     ],

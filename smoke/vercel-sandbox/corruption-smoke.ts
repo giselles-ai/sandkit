@@ -28,6 +28,13 @@ const sandkitWorkspaces = sqliteTable("sandkit_workspaces", {
   updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull(),
 });
 
+const sandkitSetupStates = sqliteTable("sandkit_setup_states", {
+  id: text("id").notNull().primaryKey(),
+  state: text("state").notNull(),
+  createdAt: text("createdAt").notNull(),
+  updatedAt: text("updatedAt").notNull(),
+});
+
 const sandkitRuns = sqliteTable("sandkit_runs", {
   id: text("id").notNull().primaryKey(),
   workspace_id: text("workspace_id").notNull(),
@@ -55,6 +62,7 @@ const sandkitPolicies = sqliteTable("sandkit_policies", {
 
 const schema = {
   sandkitWorkspaces,
+  sandkitSetupStates,
   sandkitRuns,
   sandkitPolicies,
 };
@@ -68,6 +76,12 @@ function migrate(sqlite: Database): void {
       status TEXT NOT NULL,
       name TEXT,
       lastResumedAt INTEGER,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sandkit_setup_states (
+      id TEXT PRIMARY KEY NOT NULL,
+      state TEXT NOT NULL,
       createdAt INTEGER NOT NULL,
       updatedAt INTEGER NOT NULL
     );

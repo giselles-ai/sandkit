@@ -6,6 +6,7 @@ import type {
   WorkspacePolicy,
   WorkspaceRecord,
   WorkspaceSandboxLease,
+  PersistedSandboxState,
 } from "../types.ts";
 import type { SandkitContext } from "./context.ts";
 import {
@@ -33,6 +34,20 @@ import {
   transitionToSession,
   type WorkspaceSandboxTransition,
 } from "./workspace-state.ts";
+
+function setupStateFingerprint(command: string, args: readonly string[]): string {
+  return encodeURIComponent(JSON.stringify({ command, args }));
+}
+
+export const sharedSetupStateId = (
+  adapterId: string,
+  setup: { command: string; args?: readonly string[] } | undefined,
+): string => {
+  const fingerprint = setup
+    ? setupStateFingerprint(setup.command, [...(setup.args ?? [])])
+    : "no-bootstrap";
+  return `${adapterId}:shared-bootstrap:${fingerprint}`;
+};
 
 export interface PublicWorkspaceHandle {
   readonly id: string;
@@ -116,56 +131,26 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   }
 
   async createOrResumeSandboxForCommand(): Promise<ManagedSandbox> {
-    const workspace = await this.resolveLatestWorkspace();
+    await this.resolveLatestWorkspace();
     if (await this.resolveAttachableSession()) {
       throw new Error(
         "Cannot run command while a sandbox session is active. Use attachSession() to reuse it or commit the session first.",
       );
     }
 
+    const workspace = await this.resolveLatestWorkspace();
     const sandbox = await this.resolveSandboxDriver(workspace);
 
-    return new ManagedSandbox(
-      sandbox,
-      async () => this.resolveDefaultPolicy(),
-      async (commit: SandboxCommit) =>
-        this.persistSandboxState(transitionAfterCommandCommit(commit, new Date().toISOString())),
-      {
-        onRunStart: async (input) => {
-          const policySnapshot = await this.createPolicySnapshot(input.effectivePolicy);
-          const run = await this.#ctx.adapter.runs.createRun({
-            workspaceId: this.#record.id,
-            provider: sandbox.provider,
-            executionTargetId: sandbox.id,
-            command: input.command,
-            args: input.args,
-            status: "started",
-            startedAt: input.startedAt,
-            policySnapshotId: policySnapshot.id,
-          });
-
-          return run.id;
-        },
-        onRunFinish: async (input: RunFinishInput) => {
-          await this.#ctx.adapter.runs.finishRun(input.runId, {
-            status: input.status,
-            finishedAt: input.finishedAt,
-            exitCode: input.exitCode ?? null,
-            stdout: input.stdout ?? null,
-            stderr: input.stderr ?? null,
-            providerCommit: input.providerCommit,
-          });
-        },
-      },
-    );
+    return this.createManagedSandbox(sandbox);
   }
 
   async openSession(): Promise<WorkspaceSessionHandle> {
-    const workspace = await this.resolveLatestWorkspace();
+    await this.resolveLatestWorkspace();
     if (await this.resolveAttachableSession()) {
       throw new Error("A sandbox session is already active for this workspace.");
     }
 
+    const workspace = await this.resolveLatestWorkspace();
     const sandbox = await this.resolveSandboxDriver(workspace);
     const lease = await sandbox.getSessionLease();
     await this.persistSandboxState(transitionToSession(sandbox.id, lease));
@@ -265,10 +250,142 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
 
   private async resolveSandboxDriver(workspace: WorkspaceRecord): Promise<SandboxDriver> {
     const policy = readWorkspacePolicy(workspace, allowAll());
-    const resumeState = toDriverResumeState(this.#sandboxState);
-    return resumeState
-      ? await this.#ctx.driverFactory.resumeSandbox(workspace, resumeState, { policy })
-      : await this.#ctx.driverFactory.createSandbox(workspace, { policy });
+    const currentState = toDriverResumeState(this.#sandboxState);
+    if (currentState) {
+      return this.#ctx.driverFactory.resumeSandbox(workspace, currentState, { policy });
+    }
+
+    try {
+      const setupState = await this.#readSharedSetupState();
+      if (!setupState) {
+        return this.#bootstrapSetupState(workspace, policy);
+      }
+
+      return await this.#ctx.driverFactory.resumeSandbox(workspace, setupState, {
+        policy,
+      });
+    } catch (error) {
+      if (
+        !this.#ctx.driverFactory.isSessionUnavailableError?.(error) &&
+        !this.#isRecoverableSetupStateError(error)
+      ) {
+        throw error;
+      }
+
+      await this.#clearSharedSetupState();
+      return this.#bootstrapSetupState(workspace, policy);
+    }
+  }
+
+  async #bootstrapSetupState(
+    workspace: WorkspaceRecord,
+    policy: WorkspacePolicy,
+  ): Promise<SandboxDriver> {
+    const setup = this.#ctx.options.setup;
+    if (!setup) {
+      return this.#ctx.driverFactory.createSandbox(workspace, { policy });
+    }
+
+    const sandbox = await this.#ctx.driverFactory.createSandbox(workspace, { policy });
+    const result = await sandbox.runCommand(setup.command, [...(setup.args ?? [])]);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Workspace setup failed with exit code ${result.exitCode}. ${result.stderr.trim()}`.trim(),
+      );
+    }
+
+    const setupState = await sandbox.snapshot();
+    await this.#persistSharedSetupState(setupState);
+
+    return this.#ctx.driverFactory.resumeSandbox(workspace, setupState, {
+      policy,
+    });
+  }
+
+  async #readSharedSetupState(): Promise<PersistedSandboxState | null> {
+    if (!this.#ctx.options.setup) {
+      return null;
+    }
+
+    const setupState = await this.#ctx.adapter.setupStates.getSetupState(
+      this.#sharedSetupStateId(),
+    );
+    return setupState ? setupState.state : null;
+  }
+
+  async #persistSharedSetupState(state: PersistedSandboxState): Promise<void> {
+    await this.#ctx.adapter.setupStates.putSetupState({
+      id: this.#sharedSetupStateId(),
+      state: {
+        kind: state.kind,
+        sessionId: state.sessionId,
+        state: state.state,
+      },
+    });
+  }
+
+  async #clearSharedSetupState(): Promise<void> {
+    await this.#ctx.adapter.setupStates.deleteSetupState(this.#sharedSetupStateId());
+  }
+
+  #sharedSetupStateId(): string {
+    return sharedSetupStateId(this.#ctx.adapter.id, this.#ctx.options.setup);
+  }
+
+  #isRecoverableSetupStateError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return (
+      error.message.includes("Sandkit durable state corruption") &&
+      error.message.includes("sandkit_setup_states")
+    );
+  }
+
+  private createManagedSandbox(sandbox: SandboxDriver): ManagedSandbox {
+    return new ManagedSandbox(
+      sandbox,
+      async () => this.resolveDefaultPolicy(),
+      async (commit: SandboxCommit) =>
+        this.persistSandboxState(transitionAfterCommandCommit(commit, new Date().toISOString())),
+      this.createRunLifecycle(sandbox),
+    );
+  }
+
+  private createRunLifecycle(sandbox: SandboxDriver) {
+    return {
+      onRunStart: async (input: {
+        command: string;
+        args: readonly string[];
+        effectivePolicy: WorkspacePolicy;
+        startedAt: string;
+      }) => {
+        const policySnapshot = await this.createPolicySnapshot(input.effectivePolicy);
+        const run = await this.#ctx.adapter.runs.createRun({
+          workspaceId: this.#record.id,
+          provider: sandbox.provider,
+          executionTargetId: sandbox.id,
+          command: input.command,
+          args: input.args,
+          status: "started",
+          startedAt: input.startedAt,
+          policySnapshotId: policySnapshot.id,
+        });
+
+        return run.id;
+      },
+      onRunFinish: async (input: RunFinishInput) => {
+        await this.#ctx.adapter.runs.finishRun(input.runId, {
+          status: input.status,
+          finishedAt: input.finishedAt,
+          exitCode: input.exitCode ?? null,
+          stdout: input.stdout ?? null,
+          stderr: input.stderr ?? null,
+          providerCommit: input.providerCommit,
+        });
+      },
+    };
   }
 
   private async persistSandboxState(transition: WorkspaceSandboxTransition): Promise<void> {
