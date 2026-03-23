@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 
 import type { MergeReadinessSessionState } from "@/lib/merge-readiness-service";
 
@@ -14,7 +14,7 @@ function asErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Operation failed.";
 }
 
-function formatTime(value: number | null | undefined): string {
+function formatTime(value: string | number | Date | null | undefined): string {
   if (!value) {
     return "—";
   }
@@ -54,9 +54,9 @@ async function postAction(sessionId: string, action: "interrupt" | "resume") {
   return payload;
 }
 
-export default function Page({ params }: { params: { sessionId: string } }) {
+export default function Page({ params }: { params: Promise<{ sessionId: string }> }) {
   const router = useRouter();
-  const sessionId = params.sessionId;
+  const { sessionId } = use(params);
   const [session, setSession] = useState<MergeReadinessSessionState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -137,9 +137,9 @@ export default function Page({ params }: { params: { sessionId: string } }) {
                 </Link>
               </dd>
               <dt>started</dt>
-              <dd>{formatTime(session.started_at?.getTime())}</dd>
+              <dd>{formatTime(session.started_at)}</dd>
               <dt>finished</dt>
-              <dd>{formatTime(session.finished_at?.getTime())}</dd>
+              <dd>{formatTime(session.finished_at)}</dd>
               <dt>lease</dt>
               <dd>{session.sandboxActive ? `${session.leaseRemainingMs ?? 0}ms` : "inactive"}</dd>
             </dl>
@@ -168,8 +168,20 @@ export default function Page({ params }: { params: { sessionId: string } }) {
 
           <section className="panel">
             <h2 className="section-title">observe output</h2>
-            <pre className="code">{session.outputSnippet || "No output yet."}</pre>
+            <pre className="code">
+              {session.outputSnippet ||
+                session.stderrSnippet ||
+                session.review?.error_message ||
+                "No output yet."}
+            </pre>
           </section>
+
+          {session.stderrSnippet && (
+            <section className="panel">
+              <h2 className="section-title">stderr</h2>
+              <pre className="code">{session.stderrSnippet}</pre>
+            </section>
+          )}
         </>
       )}
     </div>

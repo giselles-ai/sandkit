@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
+import { allowAll } from "sandkit";
 import type { PublicWorkspaceHandle, WorkspaceSessionHandle } from "sandkit";
 
 import {
@@ -29,6 +30,10 @@ export type ParsedPullRequest = {
   repoSlug: string;
 };
 
+const NPM_PREFIX = "/vercel/sandbox/npm-global";
+const NODE_BIN_DIR = "/vercel/runtimes/node24/bin";
+const CODEX_BIN_PATH = `${NPM_PREFIX}/bin/codex`;
+
 type PullRequestContext = {
   title: string;
   state: string;
@@ -36,6 +41,8 @@ type PullRequestContext = {
   isDraft: boolean;
   baseRefName: string;
   headRefName: string;
+  baseSha: string;
+  headSha: string;
   additions: number;
   deletions: number;
   changedFiles: number;
@@ -63,6 +70,7 @@ export type MergeReadinessReviewDetails = MergeReadinessReviewRecord & {
   questions: string[];
   nextActions: string[];
   latestSession: MergeReadinessSessionRecord | null;
+  errorDetail: string | null;
 };
 
 export type MergeReadinessSessionState = MergeReadinessSessionRecord & {
@@ -70,6 +78,7 @@ export type MergeReadinessSessionState = MergeReadinessSessionRecord & {
   leaseRemainingMs: number | null;
   sandboxActive: boolean;
   outputSnippet: string | null;
+  stderrSnippet: string | null;
 };
 
 export type MergeReadinessWorkspaceDetails = {
@@ -121,6 +130,9 @@ const DECISION_SCHEMA = JSON.stringify(
 type RuntimeFacade = {
   app: Awaited<ReturnType<typeof getMergeReadinessRuntime>>["app"];
   store: MergeReadinessStore;
+  resetWorkspaceSandboxState: Awaited<
+    ReturnType<typeof getMergeReadinessRuntime>
+  >["resetWorkspaceSandboxState"];
 };
 
 type CommandResult = {
@@ -134,6 +146,37 @@ let runtimePromise: Promise<RuntimeFacade> | null = null;
 function nowDate(): Date {
   return new Date();
 }
+
+function createLogStep(step: string, context: Record<string, unknown> = {}) {
+  const startedAt = Date.now();
+  console.info(`[merge-readiness] ${step} start`, {
+    startedAt: new Date(startedAt).toISOString(),
+    ...context,
+  });
+
+  return {
+    success(extra: Record<string, unknown> = {}) {
+      console.info(`[merge-readiness] ${step} success`, {
+        finishedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+        ...context,
+        ...extra,
+      });
+    },
+    failure(error: unknown, extra: Record<string, unknown> = {}) {
+      console.error(`[merge-readiness] ${step} failure`, {
+        finishedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+        ...context,
+        ...extra,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  };
+}
+
+const CURL_CONNECT_TIMEOUT_SECONDS = 10;
+const CURL_MAX_TIME_SECONDS = 30;
 
 function normalizePrUrl(raw: string): string {
   try {
@@ -159,6 +202,24 @@ function trimHead(value: string, maxLen = 5000): string {
   return text.length > maxLen ? `${text.slice(-maxLen)}…` : text;
 }
 
+function assertRequiredInvestigationEnv(): void {
+  const missing: string[] = [];
+
+  if (!process.env.GITHUB_TOKEN?.trim()) {
+    missing.push("GITHUB_TOKEN");
+  }
+
+  if (!process.env.CODEX_API_KEY?.trim()) {
+    missing.push("CODEX_API_KEY");
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Merge Readiness requires ${missing.join(" and ")} before it can investigate a PR. See examples/merge-readiness/README.md for setup.`,
+    );
+  }
+}
+
 function isReviewStatusActive(status: string): boolean {
   return (RESUMABLE_REVIEW_STATUSES as readonly string[]).includes(status);
 }
@@ -171,11 +232,62 @@ function isSessionStatusActive(status: string): boolean {
   return status === "starting" || status === "running";
 }
 
+type GitHubApiResponse = {
+  statusCode: number;
+  body: string;
+  stderr: string;
+};
+
+type GitHubPrResponse = {
+  title?: string;
+  state?: string;
+  body?: string;
+  draft?: boolean;
+  base?: {
+    ref?: string;
+    sha?: string;
+  };
+  head?: {
+    ref?: string;
+    sha?: string;
+  };
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
+};
+
+type GitHubCheckRunsResponse = {
+  total_count?: number;
+  check_runs?: Array<{
+    name?: string;
+    status?: string;
+    conclusion?: string;
+    output?: {
+      title?: string;
+    };
+    app?: {
+      name?: string;
+    };
+  }>;
+};
+
+type GitHubStatusResponse = {
+  state?: string;
+  statuses?: Array<{
+    context?: string;
+    state?: string;
+  }>;
+};
+
 function resolveRuntime(): Promise<RuntimeFacade> {
   if (!runtimePromise) {
     runtimePromise = (async () => {
       const runtime = await getMergeReadinessRuntime();
-      return { app: runtime.app, store: runtime.store };
+      return {
+        app: runtime.app,
+        store: runtime.store,
+        resetWorkspaceSandboxState: runtime.resetWorkspaceSandboxState,
+      };
     })();
   }
 
@@ -238,6 +350,105 @@ async function runWorkspaceCommand(
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+function parseCurlOutput(raw: string): { statusCode: number; body: string } {
+  const marker = "\n__MR_HTTP_STATUS__:";
+  const markerIndex = raw.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    return { statusCode: 0, body: raw };
+  }
+
+  const body = raw.slice(0, markerIndex).trimEnd();
+  const statusText = raw.slice(markerIndex + marker.length).trim();
+  return {
+    statusCode: Number.parseInt(statusText, 10),
+    body,
+  };
+}
+
+async function runGitHubApiRequest(
+  workspace: PublicWorkspaceHandle,
+  path: string,
+): Promise<GitHubApiResponse> {
+  const command = [
+    "set -euo pipefail",
+    "payload=$(mktemp)",
+    `status_code=$(curl -sS -o "$payload" -w "%{http_code}" \\`,
+    `  --connect-timeout ${CURL_CONNECT_TIMEOUT_SECONDS} \\`,
+    `  --max-time ${CURL_MAX_TIME_SECONDS} \\`,
+    `  -H "Accept: application/vnd.github+json" \\`,
+    `  -H "User-Agent: merge-readiness" \\`,
+    `  -L -X GET "${path}")`,
+    'cat "$payload"',
+    'printf "\\n__MR_HTTP_STATUS__:%s\\n" "$status_code"',
+    'rm -f "$payload"',
+  ].join("\n");
+
+  const result = await runWorkspaceCommand(workspace, "bash", ["-lc", command]);
+  const { statusCode, body } = parseCurlOutput(result.stdout);
+  return { statusCode, body, stderr: result.stderr };
+}
+
+function requireSuccessfulGitHubResponse(target: string, response: GitHubApiResponse): string {
+  if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(
+      `${target} request failed: status ${response.statusCode || "unknown"}; ${trimHead(
+        safeText(response.body) || safeText(response.stderr),
+        1400,
+      )}`,
+    );
+  }
+
+  return response.body;
+}
+
+function buildGitHubApiUrl(owner: string, repo: string, route: string): string {
+  const safeOwner = encodeURIComponent(owner);
+  const safeRepo = encodeURIComponent(repo);
+  return `https://api.github.com/repos/${safeOwner}/${safeRepo}/${route.replace(/^\/+/, "")}`;
+}
+
+function isRecoverableSandboxProvisionError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Status code 400 is not ok");
+}
+
+async function withRecoveredWorkspace<T>(
+  runtime: RuntimeFacade,
+  workspaceId: string,
+  action: (workspace: PublicWorkspaceHandle) => Promise<T>,
+): Promise<T> {
+  const log = createLogStep("with_recovered_workspace", { workspaceId });
+  const workspace = await getWorkspace(runtime, workspaceId);
+
+  try {
+    const result = await action(workspace);
+    log.success({ recovery: false });
+    return result;
+  } catch (error) {
+    if (!isRecoverableSandboxProvisionError(error)) {
+      log.failure(error, { recovery: false });
+      throw error;
+    }
+
+    console.warn(
+      "[merge-readiness] recoverable sandbox provisioning error, resetting workspace state",
+      {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    await runtime.resetWorkspaceSandboxState(workspaceId);
+    const recoveredWorkspace = await getWorkspace(runtime, workspaceId);
+    try {
+      const result = await action(recoveredWorkspace);
+      log.success({ recovery: true });
+      return result;
+    } catch (retryError) {
+      log.failure(retryError, { recovery: true });
+      throw retryError;
+    }
+  }
 }
 
 async function runSessionCommand(
@@ -392,10 +603,12 @@ function buildCodexScript(
 
   const command = [
     "set -euo pipefail",
+    `export PATH='${NODE_BIN_DIR}:${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'`,
     `mkdir -p '${artifactDir}'`,
     `printf '%s' '${schemaEncoded}' | base64 -d > '${schemaPath}'`,
     `printf '%s' '${promptEncoded}' | base64 -d > '${promptPath}'`,
-    `cat '${promptPath}' | codex exec --skip-git-repo-check --json --output-schema '${schemaPath}' --output-last-message '${resultPath}' -C '${repoPath}' > '${stdoutPath}' 2> '${stderrPath}'`,
+    `prompt=$(cat '${promptPath}')`,
+    `'${CODEX_BIN_PATH}' exec --yolo --skip-git-repo-check --color never --json --output-schema '${schemaPath}' --output-last-message '${resultPath}' -C '${repoPath}' "$prompt" > '${stdoutPath}' 2> '${stderrPath}'`,
   ].join("\n");
 
   return { command, stdoutPath, stderrPath, resultPath };
@@ -405,87 +618,217 @@ async function readPullRequestContext(
   workspace: PublicWorkspaceHandle,
   pr: ParsedPullRequest,
 ): Promise<PullRequestContext> {
-  const result = await runWorkspaceCommand(workspace, "gh", [
-    "pr",
-    "view",
-    pr.url,
-    "--json",
-    "title,state,isDraft,body,baseRefName,headRefName,additions,deletions,changedFiles",
-  ]);
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `Unable to read PR metadata for ${pr.url}:\n${trimHead(safeText(result.stderr || result.stdout), 1000)}`,
-    );
-  }
-
-  const parsed = JSON.parse(result.stdout) as {
-    title?: string;
-    state?: string;
-    isDraft?: boolean;
-    body?: string;
-    baseRefName?: string;
-    headRefName?: string;
-    additions?: number;
-    deletions?: number;
-    changedFiles?: number;
-  };
+  const apiResponse = await runGitHubApiRequest(
+    workspace,
+    buildGitHubApiUrl(pr.owner, pr.repo, `pulls/${pr.number}`),
+  );
+  const bodyText = requireSuccessfulGitHubResponse("PR metadata", apiResponse);
+  const parsed = JSON.parse(bodyText) as GitHubPrResponse;
 
   return {
     title: safeText(parsed.title, "Untitled PR"),
     state: safeText(parsed.state, "unknown"),
     body: safeText(parsed.body),
-    isDraft: parsed.isDraft === true,
-    baseRefName: safeText(parsed.baseRefName, ""),
-    headRefName: safeText(parsed.headRefName, ""),
+    isDraft: parsed.draft === true,
+    baseRefName: safeText(parsed.base?.ref, ""),
+    headRefName: safeText(parsed.head?.ref, ""),
+    baseSha: safeText(parsed.base?.sha),
+    headSha: safeText(parsed.head?.sha),
     additions: parseNumber(String(parsed.additions), 0),
     deletions: parseNumber(String(parsed.deletions), 0),
-    changedFiles: parseNumber(String(parsed.changedFiles), 0),
+    changedFiles: parseNumber(String(parsed.changed_files), 0),
   };
 }
 
 async function runBaselineCommands(
   workspace: PublicWorkspaceHandle,
   pr: ParsedPullRequest,
+  context: PullRequestContext,
 ): Promise<{ checks: string; diffStat: string }> {
-  const checks = await runWorkspaceCommand(workspace, "gh", [
-    "pr",
-    "checks",
-    pr.url,
-    "--json",
-    "status,conclusion,name",
-  ]).catch((error) => ({
-    exitCode: -1,
-    stdout: "",
-    stderr: error instanceof Error ? error.message : `${error}`,
-  }));
+  const statusParts: string[] = [];
 
-  const diff = await runWorkspaceCommand(workspace, "gh", ["pr", "diff", pr.url, "--stat"]);
+  try {
+    const log = createLogStep("baseline_check_runs", {
+      repo: pr.repoSlug,
+      headSha: context.headSha ?? null,
+    });
+    if (!context.headSha) {
+      throw new Error("missing head SHA");
+    }
+
+    const checkRunsApi = await runGitHubApiRequest(
+      workspace,
+      buildGitHubApiUrl(pr.owner, pr.repo, `commits/${context.headSha}/check-runs`),
+    );
+
+    let checksText = "";
+    if (checkRunsApi.statusCode >= 200 && checkRunsApi.statusCode < 300) {
+      const checkRuns = JSON.parse(checkRunsApi.body) as GitHubCheckRunsResponse;
+      const runs = Array.isArray(checkRuns.check_runs) ? checkRuns.check_runs : [];
+      if (runs.length > 0) {
+        checksText = runs
+          .map(
+            (run) =>
+              `- ${(run.name || "unknown").trim()} (${
+                run.app?.name ?? "checks"
+              }): ${run.status || "unknown"} / ${run.conclusion || "pending"}`,
+          )
+          .join("\n");
+      }
+    }
+
+    if (checksText) {
+      statusParts.push(`check-runs:\n${checksText}`);
+    } else if (checkRunsApi.statusCode >= 200 && checkRunsApi.statusCode < 300) {
+      statusParts.push("check-runs: no completed check-run records available.");
+    } else {
+      statusParts.push(
+        `check-runs: request failed with status ${checkRunsApi.statusCode} (${trimHead(
+          safeText(checkRunsApi.body || safeText(checkRunsApi.stderr)),
+        )})`,
+      );
+    }
+    log.success({ statusCode: checkRunsApi.statusCode, bytes: checkRunsApi.body.length });
+  } catch (error) {
+    statusParts.push(`check-runs failed: ${error instanceof Error ? error.message : `${error}`}`);
+    console.error("[merge-readiness] baseline_check_runs failure", {
+      repo: pr.repoSlug,
+      headSha: context.headSha ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  try {
+    const log = createLogStep("baseline_commit_status", {
+      repo: pr.repoSlug,
+      headSha: context.headSha ?? null,
+    });
+    if (!context.headSha) {
+      throw new Error("missing head SHA");
+    }
+
+    const statusApi = await runGitHubApiRequest(
+      workspace,
+      buildGitHubApiUrl(pr.owner, pr.repo, `commits/${context.headSha}/status`),
+    );
+    if (statusApi.statusCode >= 200 && statusApi.statusCode < 300) {
+      const status = JSON.parse(statusApi.body) as GitHubStatusResponse;
+      statusParts.push(`overall status: ${safeText(status.state, "unknown")}`);
+      if (Array.isArray(status.statuses)) {
+        for (const item of status.statuses.slice(0, 8)) {
+          statusParts.push(
+            `- ${safeText(item.context, "context")} => ${safeText(item.state, "unknown")}`,
+          );
+        }
+      }
+    } else {
+      statusParts.push(
+        `commit status: request failed with status ${statusApi.statusCode} (${trimHead(
+          safeText(statusApi.body, ""),
+          1000,
+        )})`,
+      );
+    }
+    log.success({ statusCode: statusApi.statusCode, bytes: statusApi.body.length });
+  } catch (error) {
+    statusParts.push(
+      `commit status failed: ${error instanceof Error ? error.message : `${error}`}`,
+    );
+    console.error("[merge-readiness] baseline_commit_status failure", {
+      repo: pr.repoSlug,
+      headSha: context.headSha ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const diffStat = await collectDiffStatFromApi(workspace, pr);
   return {
-    checks:
-      checks.exitCode === 0 ? checks.stdout : trimHead(`${checks.stderr || checks.stdout}`, 2000),
-    diffStat: trimHead(diff.stdout || diff.stderr, 1200),
+    checks: trimHead(statusParts.join("\n"), 5000),
+    diffStat,
   };
+}
+
+async function collectDiffStatFromApi(
+  workspace: PublicWorkspaceHandle,
+  pr: ParsedPullRequest,
+): Promise<string> {
+  const log = createLogStep("baseline_diff_stat", { repo: pr.repoSlug, prNumber: pr.number });
+  const filesApi = await runGitHubApiRequest(
+    workspace,
+    buildGitHubApiUrl(pr.owner, pr.repo, `pulls/${pr.number}/files?per_page=100`),
+  );
+  if (filesApi.statusCode < 200 || filesApi.statusCode >= 300) {
+    const result = trimHead(
+      `Diff stat request failed with status ${filesApi.statusCode} (${safeText(
+        filesApi.body || filesApi.stderr,
+      )})`,
+      1200,
+    );
+    log.failure(new Error(result), { statusCode: filesApi.statusCode });
+    return result;
+  }
+
+  const files = JSON.parse(filesApi.body) as Array<{
+    filename?: string;
+    status?: string;
+    additions?: number;
+    deletions?: number;
+    changes?: number;
+  }>;
+
+  if (!Array.isArray(files) || files.length === 0) {
+    log.success({ statusCode: filesApi.statusCode, files: 0 });
+    return "Diff stat unavailable: no PR file entries returned.";
+  }
+
+  const result = trimHead(
+    files
+      .slice(0, 100)
+      .map((file) => {
+        const filename = safeText(file.filename, "unknown");
+        const status = safeText(file.status, "modified");
+        const additions = parseNumber(String(file.additions), 0);
+        const deletions = parseNumber(String(file.deletions), 0);
+        const changes = parseNumber(String(file.changes), additions + deletions);
+        return `- ${filename} (${status}, +${additions} -${deletions}, ${changes} changes)`;
+      })
+      .join("\n"),
+    2000,
+  );
+  log.success({ statusCode: filesApi.statusCode, files: files.length });
+  return result;
 }
 
 async function ensureRepoPrepared(
   workspace: PublicWorkspaceHandle,
   pr: ParsedPullRequest,
+  context: PullRequestContext,
 ): Promise<string> {
   const repoPath = workspaceRepoPath(workspace.id);
-  const branch = `pr-${pr.number}-${pr.repo}`;
+  if (!context.headSha) {
+    throw new Error("Repository preparation failed: missing PR head SHA.");
+  }
+
   const checkoutScript = [
     "set -euo pipefail",
+    "archive=$(mktemp)",
+    `repo_url="${buildGitHubApiUrl(pr.owner, pr.repo, `tarball/${context.headSha}`)}"`,
+    `status_code=$(curl -sS -o "$archive" -w "%{http_code}" \\`,
+    `  --connect-timeout ${CURL_CONNECT_TIMEOUT_SECONDS} \\`,
+    `  --max-time ${CURL_MAX_TIME_SECONDS} \\`,
+    `  -H "Accept: application/vnd.github+json" \\`,
+    `  -H "User-Agent: merge-readiness" \\`,
+    '  -L "$repo_url")',
+    'if [ "$status_code" -lt 200 ] || [ "$status_code" -ge 300 ]; then',
+    '  echo "Failed to download repository tarball." >&2',
+    '  echo "HTTP status: ${status_code}" >&2',
+    '  rm -f "$archive"',
+    "  exit 2",
+    "fi",
+    `rm -rf '${repoPath}'`,
     `mkdir -p '${repoPath}'`,
-    `if [ ! -d '${repoPath}/.git' ]; then`,
-    `  gh repo clone '${pr.repoSlug}' '${repoPath}'`,
-    "fi",
-    `cd '${repoPath}'`,
-    "git fetch origin",
-    `git fetch origin "refs/pull/${pr.number}/head:${branch}" || true`,
-    `if ! gh pr checkout '${pr.number}' --repo '${pr.repoSlug}' --force; then`,
-    `  git checkout -f '${branch}' 2>/dev/null || git checkout -f -b '${branch}'`,
-    "fi",
-    "git clean -fd",
+    `tar -xzf "$archive" -C '${repoPath}' --strip-components=1`,
+    'rm -f "$archive"',
   ].join("\n");
 
   const prepared = await runWorkspaceCommand(workspace, "bash", ["-lc", checkoutScript]);
@@ -498,17 +841,56 @@ async function ensureRepoPrepared(
   return repoPath;
 }
 
+async function ensureCodexCliBootstrap(workspace: PublicWorkspaceHandle): Promise<void> {
+  const check = await workspace.sandbox.runCommand("bash", [
+    "-lc",
+    [
+      "set -euo pipefail",
+      `export PATH='${NODE_BIN_DIR}:${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'`,
+      `test -x '${CODEX_BIN_PATH}'`,
+      `'${CODEX_BIN_PATH}' --version`,
+    ].join("\n"),
+  ]);
+
+  if (check.exitCode === 0) {
+    return;
+  }
+
+  const install = await workspace.sandbox.runCommand({
+    command: "bash",
+    args: [
+      "-lc",
+      [
+        "set -euo pipefail",
+        `mkdir -p '${NPM_PREFIX}'`,
+        `export PATH='${NODE_BIN_DIR}:${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'`,
+        `npm install -g --prefix '${NPM_PREFIX}' @openai/codex`,
+        `'${CODEX_BIN_PATH}' --version`,
+      ].join("\n"),
+    ],
+    policy: allowAll(),
+  });
+
+  if (install.exitCode !== 0) {
+    throw new Error(
+      `Codex CLI bootstrap failed:\n${trimHead(install.stderr || install.stdout, 2000)}`,
+    );
+  }
+}
+
 async function finalizeSession(
-  workspace: PublicWorkspaceHandle,
   review: MergeReadinessReviewRecord,
   session: MergeReadinessSessionRecord,
   decision: CodexDecision | null,
   sessionHandle: WorkspaceSessionHandle | null,
 ): Promise<void> {
   const runtime = await resolveRuntime();
-  const parsed = parsePullRequest(review.pr_url);
-  const context = await readPullRequestContext(workspace, parsed);
   const now = nowDate();
+  const reviewStateLabel = safeText(review.status, "unknown");
+  const isOpenReview =
+    reviewStateLabel === "requested" ||
+    reviewStateLabel === "monitoring" ||
+    reviewStateLabel === "running";
 
   if (!decision) {
     await runtime.store.updateReview(review.id, {
@@ -536,23 +918,13 @@ async function finalizeSession(
     return;
   }
 
-  const verdictStatus =
-    context.state.toLowerCase() === "open"
-      ? decision.verdict === "safe_to_merge"
-        ? "ready"
-        : "blocked"
-      : "blocked";
-  const blockedByState =
-    context.state.toLowerCase() !== "open" ? [`PR state is ${context.state}.`] : [];
-  const evidence = [...blockedByState, ...decision.evidence];
+  const verdictStatus = isOpenReview && decision.verdict === "safe_to_merge" ? "ready" : "blocked";
+  const evidence = [...decision.evidence];
 
   await runtime.store.updateReview(review.id, {
     status: verdictStatus,
     verdict: decision.verdict,
-    recommendation:
-      context.isDraft && decision.verdict !== "safe_to_merge"
-        ? "needs_human"
-        : decision.recommendation,
+    recommendation: decision.recommendation,
     evidence: evidence,
     questions: decision.questions,
     nextActions: decision.next_actions,
@@ -684,40 +1056,106 @@ async function reconcileReviewProgress(
   };
 
   const parsedDecision = await parseDecisionFromFile(latestSession.result_path);
-  await finalizeSession(workspace, reviewState, latestSession, parsedDecision, sessionHandle);
+  await finalizeSession(reviewState, latestSession, parsedDecision, sessionHandle);
 }
 
 async function startInvestigationSession(
   review: MergeReadinessReviewRecord,
 ): Promise<MergeReadinessSessionRecord> {
   const runtime = await resolveRuntime();
-  const workspace = await getWorkspace(runtime, review.workspace_id);
   const pr = parsePullRequest(review.pr_url);
-  const context = await readPullRequestContext(workspace, pr);
-  const baseline = await runBaselineCommands(workspace, pr);
-  const repoPath = await ensureRepoPrepared(workspace, pr);
-  const prompt = buildDecisionFromContext(pr, context, baseline);
-  const invocation = buildCodexScript(workspace.id, review.id, repoPath, prompt);
+  return withRecoveredWorkspace(runtime, review.workspace_id, async (workspace) => {
+    const sessionLog = createLogStep("start_investigation_session", {
+      reviewId: review.id,
+      workspaceId: review.workspace_id,
+      prUrl: review.pr_url,
+    });
 
-  const session = await workspace.sandbox.openSession();
-  const lease = await workspace.sandbox.getActiveLease();
-  const process = await session.startProcess("bash", ["-lc", invocation.command]);
-  const sessionRecord = await runtime.store.createSession(review.id, review.workspace_id, {
-    sandboxId: lease?.sandboxId ?? null,
-    processId: process.processId,
-    status: "running",
-    command: `bash -lc (review ${review.id})`,
-    stdoutPath: invocation.stdoutPath,
-    stderrPath: invocation.stderrPath,
-    resultPath: invocation.resultPath,
+    try {
+      const prContextLog = createLogStep("read_pr_context", {
+        reviewId: review.id,
+        workspaceId: review.workspace_id,
+      });
+      const context = await readPullRequestContext(workspace, pr);
+      prContextLog.success({
+        title: context.title,
+        changedFiles: context.changedFiles,
+        draft: context.isDraft,
+      });
+
+      const baselineLog = createLogStep("baseline_checks", {
+        reviewId: review.id,
+        workspaceId: review.workspace_id,
+      });
+      const baseline = await runBaselineCommands(workspace, pr, context);
+      const repoPath = await ensureRepoPrepared(workspace, pr, context);
+      baselineLog.success({
+        checksBytes: baseline.checks.length,
+        diffStatBytes: baseline.diffStat.length,
+      });
+
+      const codexBootstrapLog = createLogStep("bootstrap_codex_cli", {
+        reviewId: review.id,
+        workspaceId: review.workspace_id,
+      });
+      await ensureCodexCliBootstrap(workspace);
+      codexBootstrapLog.success({ codexBin: CODEX_BIN_PATH });
+
+      const prompt = buildDecisionFromContext(pr, context, {
+        checks: baseline.checks,
+        diffStat: baseline.diffStat,
+      });
+      const invocation = buildCodexScript(workspace.id, review.id, repoPath, prompt);
+
+      await runtime.store.updateReview(review.id, {
+        status: "running",
+        outputPath: invocation.resultPath,
+      });
+
+      const processLog = createLogStep("run_codex_exec", {
+        reviewId: review.id,
+        workspaceId: review.workspace_id,
+      });
+      const result = await workspace.sandbox.runCommand({
+        command: "bash",
+        args: ["-lc", invocation.command],
+      });
+      processLog.success({
+        exitCode: result.exitCode,
+        stdoutPath: invocation.stdoutPath,
+        stderrPath: invocation.stderrPath,
+        resultPath: invocation.resultPath,
+      });
+
+      const sessionRecord = await runtime.store.createSession(review.id, review.workspace_id, {
+        sandboxId: null,
+        processId: null,
+        status: result.exitCode === 0 ? "completed" : "failed",
+        command: `codex exec (durable review ${review.id})`,
+        stdoutPath: invocation.stdoutPath,
+        stderrPath: invocation.stderrPath,
+        resultPath: invocation.resultPath,
+      });
+
+      const parsedDecision = await readResultFromSessionFile(
+        async (target) =>
+          (
+            await runWorkspaceCommand(workspace, "bash", [
+              "-lc",
+              `cat '${target}' 2>/dev/null || true`,
+            ])
+          ).stdout,
+        invocation.resultPath,
+      );
+      await finalizeSession(review, sessionRecord, parsedDecision, null);
+
+      sessionLog.success({ sessionId: sessionRecord.id });
+      return sessionRecord;
+    } catch (error) {
+      sessionLog.failure(error);
+      throw error;
+    }
   });
-
-  await runtime.store.updateReview(review.id, {
-    status: "monitoring",
-    outputPath: invocation.resultPath,
-  });
-
-  return sessionRecord;
 }
 
 async function getWorkspace(
@@ -732,50 +1170,71 @@ export async function requestReview(prUrl: string): Promise<{
   workspaceId: string;
   started: boolean;
 }> {
+  assertRequiredInvestigationEnv();
+  const requestLog = createLogStep("request_review", { prUrl });
   const runtime = await resolveRuntime();
   const parsed = parsePullRequest(prUrl);
   const workspaceId = reviewWorkspaceIdFromUrl(parsed.url);
-  const workspace = await getWorkspace(runtime, workspaceId);
   const existing = await runtime.store.getLatestReviewByPrUrl(parsed.url);
 
   if (existing && isReviewStatusActive(existing.status)) {
-    await reconcileReviewProgress(workspace, existing.id);
-    const refreshed = await runtime.store.getReviewById(existing.id);
-    if (!refreshed) {
-      throw new Error("Review not found while reconciling.");
+    try {
+      const workspace = await getWorkspace(runtime, workspaceId);
+      const reconcileLog = createLogStep("reconcile_existing_review", {
+        reviewId: existing.id,
+        workspaceId,
+      });
+      await reconcileReviewProgress(workspace, existing.id);
+      reconcileLog.success();
+      const refreshed = await runtime.store.getReviewById(existing.id);
+      if (!refreshed) {
+        throw new Error("Review not found while reconciling.");
+      }
+      requestLog.success({ reviewId: refreshed.id, reused: true, started: false });
+      return {
+        review: buildSummary(refreshed, refreshed.latestSession),
+        workspaceId,
+        started: false,
+      };
+    } catch (error) {
+      requestLog.failure(error, { workspaceId, existingReviewId: existing.id, reused: true });
+      throw error;
     }
+  }
+
+  try {
+    const context = await withRecoveredWorkspace(runtime, workspaceId, (workspace) =>
+      readPullRequestContext(workspace, parsed),
+    );
+    const review = await runtime.store.createReview(workspaceId, {
+      prUrl: parsed.url,
+      prTitle: context.title,
+      prRepo: parsed.repo,
+      prOwner: parsed.owner,
+      prNumber: parsed.number,
+      status: "requested",
+    });
+
+    const session = await startInvestigationSession(review);
+    const refreshed = await runtime.store.getReviewById(review.id);
+    if (!refreshed) {
+      throw new Error("Review disappeared after start.");
+    }
+
+    requestLog.success({ reviewId: review.id, reused: false, started: Boolean(session) });
     return {
-      review: buildSummary(refreshed, refreshed.latestSession),
+      review: buildSummary(refreshed, refreshed.latestSession ?? session),
       workspaceId,
-      started: false,
+      started: Boolean(session),
     };
+  } catch (error) {
+    requestLog.failure(error, { workspaceId, reused: false });
+    throw error;
   }
-
-  const context = await readPullRequestContext(workspace, parsed);
-  const review = await runtime.store.createReview(workspaceId, {
-    prUrl: parsed.url,
-    prTitle: context.title,
-    prRepo: parsed.repo,
-    prOwner: parsed.owner,
-    prNumber: parsed.number,
-    status: "requested",
-  });
-
-  const session = await startInvestigationSession(review);
-  await reconcileReviewProgress(workspace, review.id);
-  const refreshed = await runtime.store.getReviewById(review.id);
-  if (!refreshed) {
-    throw new Error("Review disappeared after start.");
-  }
-
-  return {
-    review: buildSummary(refreshed, refreshed.latestSession ?? session),
-    workspaceId,
-    started: Boolean(session),
-  };
 }
 
 export async function resumeReview(reviewId: string): Promise<TopReviewSummary> {
+  assertRequiredInvestigationEnv();
   const runtime = await resolveRuntime();
   const review = await runtime.store.getReviewById(reviewId);
   if (!review) {
@@ -832,6 +1291,7 @@ export async function getReviewDetails(reviewId: string): Promise<MergeReadiness
     questions: parseTextListFromDb(refreshed.questions),
     nextActions: parseTextListFromDb(refreshed.next_actions),
     latestSession: refreshed.latestSession,
+    errorDetail: refreshed.error_message ?? null,
   };
 }
 
@@ -885,6 +1345,7 @@ export async function getSessionState(sessionId: string): Promise<MergeReadiness
   const sandboxActive = Boolean(lease && lease.sandboxId === session.sandbox_id);
   const leaseRemainingMs = lease?.remainingMs ?? null;
   const output = trimHead(await readSessionFile(workspace, session, session.stdout_path));
+  const stderr = trimHead(await readSessionFile(workspace, session, session.stderr_path));
 
   return {
     ...session,
@@ -892,6 +1353,7 @@ export async function getSessionState(sessionId: string): Promise<MergeReadiness
     leaseRemainingMs,
     sandboxActive,
     outputSnippet: output || null,
+    stderrSnippet: stderr || null,
   };
 }
 

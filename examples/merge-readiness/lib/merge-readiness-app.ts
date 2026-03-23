@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createClient, type Client } from "@libsql/client";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { allowServices, codex, github } from "sandkit";
 import { type WorkspacePolicy } from "sandkit";
@@ -48,6 +49,7 @@ export type MergeReadinessRuntime = {
   app: ReturnType<typeof sandkit>;
   store: MergeReadinessStore;
   config: MergeReadinessRuntimeConfig;
+  resetWorkspaceSandboxState: (workspaceId: string) => Promise<void>;
 };
 
 function parsePositiveMs(value: number): number {
@@ -147,6 +149,29 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
     config: {
       workspacePolicy: policyForMergeReadiness(),
       sandboxTimeoutMs: parsePositiveMs(SANDBOX_TIMEOUT_MS),
+    },
+    resetWorkspaceSandboxState: async (workspaceId: string) => {
+      const rows = await db
+        .select({ metadata: sandkitWorkspaces.metadata })
+        .from(sandkitWorkspaces)
+        .where(eq(sandkitWorkspaces.id, workspaceId))
+        .limit(1);
+
+      const currentMetadata =
+        rows[0]?.metadata && typeof rows[0].metadata === "object" ? { ...rows[0].metadata } : {};
+      if ("sandkit:sandbox" in currentMetadata) {
+        delete currentMetadata["sandkit:sandbox"];
+      }
+
+      await db
+        .update(sandkitWorkspaces)
+        .set({
+          metadata: currentMetadata,
+          sandboxId: null,
+          lastResumedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(sandkitWorkspaces.id, workspaceId));
     },
   };
 }

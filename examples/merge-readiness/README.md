@@ -19,8 +19,8 @@ The app also lets operators monitor and resume ongoing investigations.
 
 1. **Top page**: `request a merge-readiness review` from a PR URL.
 2. **Runtime orchestration**:
-   - **Durable phase** (`runCommand()`): fetch PR metadata, run baseline checks, clone/prepare repo.
-   - **Live phase** (`openSession()` + `startProcess()`): execute `codex` and write structured decision output.
+   - **Durable phase** (`runCommand()`): fetch PR metadata, run baseline checks, download/extract the PR head tarball, bootstrap the Codex CLI, and prepare the workspace.
+   - **Live phase** (`openSession()` + `startProcess()`): execute `codex` (`--yolo --json --skip-git-repo-check`) and write structured decision output.
 3. **Post-run resolution**: read decision JSON and persist review/session state.
 4. **Review and Workspace pages**: inspect evidence and status, run additional passes.
 5. **Session page**: observe output, interrupt, or resume.
@@ -58,7 +58,6 @@ bun run dev
 
 You must have:
 
-- `gh` authenticated in the sandbox runtime, or a valid `GITHUB_TOKEN` available there.
 - GitHub/Codex access available for the sandbox environment via Sandkit policy.
 - `codex` CLI installed in the execution environment.
 
@@ -66,12 +65,16 @@ You must have:
 
 Required for real investigations:
 
-- `GITHUB_TOKEN`
-  - Used by the built-in GitHub policy and by `gh` when the sandbox inspects the PR, linked issues, checks, and repository state.
 - `CODEX_API_KEY`
   - Used by the built-in Codex policy and by `codex exec` during the live investigation phase.
+  - The example bootstraps the `@openai/codex` CLI durably before opening the live session.
 
 Optional:
+
+- `GITHUB_TOKEN`
+  - Not required for public-repository investigations.
+  - Required if you later adapt this example to download private repository contents or fetch private PR refs.
+  - GitHub REST metadata/checks/status lookups are sent by sandboxed `curl` and rely on Sandkit's `github()` policy to inject the authorization header.
 
 - `MR_WORKSPACE_ROOT`
   - Filesystem root where prepared workspaces are stored.

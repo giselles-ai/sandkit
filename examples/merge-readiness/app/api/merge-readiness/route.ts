@@ -35,6 +35,18 @@ type ErrorResponse = {
   error: string;
 };
 
+function describeTopActionError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Action failed.";
+  }
+
+  if (error.message.includes("Status code 400 is not ok")) {
+    return "Failed to provision or resume the sandbox workspace (upstream returned HTTP 400). Check your Vercel Sandbox configuration for this app, and verify GITHUB_TOKEN and CODEX_API_KEY are set as described in examples/merge-readiness/README.md.";
+  }
+
+  return error.message;
+}
+
 function parseTopPayload(raw: unknown): TopActionPayload | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -85,9 +97,6 @@ export async function POST(
     const review = await resumeReview(payload.reviewId);
     return NextResponse.json({ review });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Action failed." },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: describeTopActionError(error) }, { status: 500 });
   }
 }

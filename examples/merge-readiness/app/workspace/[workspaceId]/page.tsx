@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 
 import type {
   MergeReadinessWorkspaceDetails,
@@ -72,8 +72,8 @@ async function runWorkspace(workspaceId: string, prUrl: string) {
   return payload;
 }
 
-export default function Page({ params }: { params: { workspaceId: string } }) {
-  const workspaceId = params.workspaceId;
+export default function Page({ params }: { params: Promise<{ workspaceId: string }> }) {
+  const { workspaceId } = use(params);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);

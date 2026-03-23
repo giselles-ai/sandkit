@@ -134,6 +134,13 @@ export default async function Page({ params }: RouteParams) {
         <BulletList label="read questions" items={review.questions} />
       </section>
 
+      {review.errorDetail && (
+        <section className="panel">
+          <h2 className="section-title">failure detail</h2>
+          <pre className="code">{review.errorDetail}</pre>
+        </section>
+      )}
+
       <BulletList label="next actions" items={review.nextActions} />
 
       {latestSession && (
