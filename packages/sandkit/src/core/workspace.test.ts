@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { createMemoryAdapter } from "../adapters/memory.ts";
-import { allowServices } from "../policies/dsl.ts";
+import { codex } from "../policies/codex.ts";
+import { allowAll, allowServices } from "../policies/dsl.ts";
 import type {
   CommandResult,
   PersistedSandboxState,
@@ -322,5 +323,47 @@ describe("Workspace setup lifecycle", () => {
     expect(secondSetupState).toBeTruthy();
     expect(firstSetupStateId).toMatch(/shared-bootstrap/);
     expect(secondSetupStateId).toMatch(/shared-bootstrap/);
+  });
+
+  test("isolates bootstrap state per setup policy shape", async () => {
+    const adapter = createMemoryAdapter();
+    const first = sandkit({
+      database: adapter,
+      setup: {
+        command: "echo",
+        args: ["shared", ">", "hello.txt"],
+      },
+    });
+    const second = sandkit({
+      database: adapter,
+      setup: {
+        command: "echo",
+        args: ["shared", ">", "hello.txt"],
+        policy: allowAll(),
+      },
+    });
+
+    const firstSetupStateId = sharedSetupStateId(adapter.id, first.context.options.setup);
+    const secondSetupStateId = sharedSetupStateId(adapter.id, second.context.options.setup);
+
+    expect(firstSetupStateId).not.toBe(secondSetupStateId);
+  });
+
+  test("rejects explicit secret-bearing setup policy", async () => {
+    const app = sandkit({
+      setup: {
+        command: "echo",
+        args: ["shared", ">", "hello.txt"],
+        policy: allowServices([codex({ apiKey: "top-secret" })]),
+      },
+    });
+    const workspace = await app.createWorkspace();
+
+    await expect(
+      workspace.sandbox.runCommand({
+        command: "cat",
+        args: ["hello.txt"],
+      }),
+    ).rejects.toThrow(/contains an explicit secret and cannot be stored durably/);
   });
 });

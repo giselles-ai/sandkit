@@ -1,4 +1,5 @@
 import { allowAll } from "../policies/dsl.ts";
+import { assertWorkspacePolicyIsDurable } from "../policies/dsl.ts";
 import type {
   RunFinishInput as AdapterRunFinishInput,
   SandboxDriver,
@@ -35,16 +36,34 @@ import {
   type WorkspaceSandboxTransition,
 } from "./workspace-state.ts";
 
-function setupStateFingerprint(command: string, args: readonly string[]): string {
-  return encodeURIComponent(JSON.stringify({ command, args }));
+function setupStateFingerprint(
+  command: string,
+  args: readonly string[],
+  policy: WorkspacePolicy | undefined,
+): string {
+  return encodeURIComponent(
+    JSON.stringify({
+      command,
+      args,
+      policy: policy
+        ? {
+            id: describeWorkspacePolicyId(policy),
+            config: asPolicySnapshotConfig(policy),
+          }
+        : null,
+    }),
+  );
 }
 
 export const sharedSetupStateId = (
   adapterId: string,
-  setup: { command: string; args?: readonly string[] } | undefined,
+  setup: { command: string; args?: readonly string[]; policy?: WorkspacePolicy } | undefined,
 ): string => {
+  if (setup?.policy) {
+    assertWorkspacePolicyIsDurable(setup.policy);
+  }
   const fingerprint = setup
-    ? setupStateFingerprint(setup.command, [...(setup.args ?? [])])
+    ? setupStateFingerprint(setup.command, [...(setup.args ?? [])], setup.policy)
     : "no-bootstrap";
   return `${adapterId}:shared-bootstrap:${fingerprint}`;
 };
@@ -286,7 +305,10 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       return this.#ctx.driverFactory.createSandbox(workspace, { policy });
     }
 
-    const sandbox = await this.#ctx.driverFactory.createSandbox(workspace, { policy });
+    const setupPolicy = setup.policy ?? policy;
+    const sandbox = await this.#ctx.driverFactory.createSandbox(workspace, {
+      policy: setupPolicy,
+    });
     const result = await sandbox.runCommand(setup.command, [...(setup.args ?? [])]);
     if (result.exitCode !== 0) {
       throw new Error(
