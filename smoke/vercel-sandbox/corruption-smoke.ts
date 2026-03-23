@@ -290,12 +290,11 @@ async function runProviderCommitCorruptionScenario(): Promise<void> {
 async function runAggregateFailureScenario(): Promise<void> {
   const app = sandkit({
     database: createMemoryAdapter(),
-    policy: allowAll(),
     sandbox: {
       driverFactory: createFailingDriverFactory(),
     },
   });
-  const workspace = await app.createWorkspace({ name: "aggregate-failure" });
+  const workspace = await app.createWorkspace({ name: "aggregate-failure", policy: allowAll() });
 
   await expectAggregateError(
     "command + durability failure",

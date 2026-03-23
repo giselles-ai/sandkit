@@ -32,10 +32,11 @@ const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
-  policy: allowServices([codex(), gemini()]),
 });
 
-const workspace = await appSandkit.createWorkspace();
+const workspace = await appSandkit.createWorkspace({
+  policy: allowServices([codex(), gemini()]),
+});
 
 await workspace.sandbox.runCommand({
   command: "sh",
@@ -68,9 +69,13 @@ await workspace.sandbox.runCommand({
 });
 ```
 
-Durable default policy lives on the workspace:
+Durable default policy belongs to the workspace. Set it when creating the workspace or update it later:
 
 ```ts
+const workspace = await appSandkit.createWorkspace({
+  policy: allowServices([codex()]),
+});
+
 await workspace.setPolicy(allowServices([codex()]));
 ```
 
@@ -106,7 +111,6 @@ const appSandkit = sandkit({
     provider: "sqlite",
     workspaces: schema.sandkitWorkspaces,
   }),
-  policy: allowServices([codex()]),
 });
 ```
 

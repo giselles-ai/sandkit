@@ -30,10 +30,11 @@ const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
-  policy: allowServices([codex(), gemini()]),
 });
 
-const workspace = await appSandkit.createWorkspace();
+const workspace = await appSandkit.createWorkspace({
+  policy: allowServices([codex(), gemini()]),
+});
 
 await workspace.sandbox.runCommand({
   command: "sh",
@@ -47,7 +48,7 @@ await workspace.sandbox.runCommand({
 - `gemini()` reads `GEMINI_API_KEY`
 - `github()` reads `GITHUB_TOKEN`
 
-Use `workspace.setPolicy(...)` for the durable default, or pass `policy` to `runCommand(...)` for a one-off override.
+Durable default policy belongs to the workspace: use `createWorkspace({ policy: ... })` when you create it, or `workspace.setPolicy(...)` later. Pass `policy` to `runCommand(...)` for one-off overrides.
 
 ## Schema Generation
 
