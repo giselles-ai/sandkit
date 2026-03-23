@@ -25,4 +25,5 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - run: bun install --frozen-lockfile
+      - run: bun run --cwd packages/sandkit build
       - run: bun test
