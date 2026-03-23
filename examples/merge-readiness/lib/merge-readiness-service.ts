@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import { allowAll } from "@giselles-ai/sandkit";
 import type { PublicWorkspaceHandle, WorkspaceSessionHandle } from "@giselles-ai/sandkit";
 
 import {
