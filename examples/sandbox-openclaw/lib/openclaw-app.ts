@@ -18,16 +18,16 @@ import {
 } from "../db/schema";
 import { createOpenClawStore, type OpenClawStore } from "./openclaw-store";
 
-const DEFAULT_AI_GATEWAY = "https://ai-gateway.vercel.sh/v1";
-const DEFAULT_AI_MODEL = "openai/gpt-5.4-mini";
+export const AI_GATEWAY_API_URL = "https://ai-gateway.vercel.sh/v1";
+export const AI_GATEWAY_MODEL = "openai/gpt-5.4-mini";
 // openclaw@2026.3.22 was published without dist/control-ui assets upstream.
 // Track https://github.com/openclaw/openclaw/issues/52808 and
 // https://github.com/openclaw/openclaw/pull/52839.
 // Pin the last known good stable release until a fixed version is available.
-const DEFAULT_INSTALL_SPEC = "openclaw@2026.3.13";
-const DEFAULT_PORT = 18_789;
-const DEFAULT_TIMEOUT_MS = 20 * 60_000;
-const DEFAULT_WORKSPACE_ID = "openclaw-production";
+export const OPENCLAW_INSTALL_SPEC = "openclaw@2026.3.13";
+export const OPENCLAW_GATEWAY_PORT = 18_789;
+export const SANDBOX_TIMEOUT_MS = 20 * 60_000;
+export const WORKSPACE_ID = "openclaw-production";
 const SOURCE_EXAMPLE_ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CWD_EXAMPLE_ROOT_DIR = process.cwd().endsWith("/examples/sandbox-openclaw")
   ? process.cwd()
@@ -37,18 +37,6 @@ const EXAMPLE_ROOT_DIR = existsSync(join(CWD_EXAMPLE_ROOT_DIR, "drizzle.config.t
   : SOURCE_EXAMPLE_ROOT_DIR;
 const DATA_DIR = join(EXAMPLE_ROOT_DIR, "data");
 
-export const WORKSPACE_ID = process.env.OPENCLAW_WORKSPACE_ID ?? DEFAULT_WORKSPACE_ID;
-export const OPENCLAW_INSTALL_SPEC = process.env.OPENCLAW_INSTALL_SPEC ?? DEFAULT_INSTALL_SPEC;
-export const AI_GATEWAY_API_URL = process.env.AI_GATEWAY_BASE_URL ?? DEFAULT_AI_GATEWAY;
-export const AI_GATEWAY_MODEL = process.env.AI_GATEWAY_MODEL ?? DEFAULT_AI_MODEL;
-export const OPENCLAW_GATEWAY_PORT = Number.parseInt(
-  process.env.OPENCLAW_GATEWAY_PORT ?? `${DEFAULT_PORT}`,
-  10,
-);
-export const SANDBOX_TIMEOUT_MS = Number.parseInt(
-  process.env.SANDBOX_TIMEOUT_MS ?? `${DEFAULT_TIMEOUT_MS}`,
-  10,
-);
 export const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY ?? "";
 
 const REQUIRED_SCHEMA_TABLES = [
@@ -75,14 +63,6 @@ export type OpenClawRuntime = {
   store: OpenClawStore;
   config: OpenClawRuntimeConfig;
 };
-
-function parsePositiveMs(value: number, fallback: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-
-  return Math.floor(value);
-}
 
 async function assertSchemaInitialized(sqlite: Client): Promise<void> {
   const missing: string[] = [];
@@ -149,7 +129,7 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
     database: adapter,
     sandbox: vercelSandbox({
       runtime: "node24",
-      timeout: parsePositiveMs(SANDBOX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+      timeout: SANDBOX_TIMEOUT_MS,
       ports: [OPENCLAW_GATEWAY_PORT],
     }),
   });
@@ -163,7 +143,7 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
       aiGatewayApiUrl: AI_GATEWAY_API_URL,
       aiGatewayModel: AI_GATEWAY_MODEL,
       gatewayPort: OPENCLAW_GATEWAY_PORT,
-      sandboxTimeoutMs: parsePositiveMs(SANDBOX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+      sandboxTimeoutMs: SANDBOX_TIMEOUT_MS,
     },
   };
 }
