@@ -31,8 +31,8 @@ const sandkitWorkspaces = sqliteTable("sandkit_workspaces", {
 const sandkitSetupStates = sqliteTable("sandkit_setup_states", {
   id: text("id").notNull().primaryKey(),
   state: text("state").notNull(),
-  createdAt: text("createdAt").notNull(),
-  updatedAt: text("updatedAt").notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull(),
 });
 
 const sandkitRuns = sqliteTable("sandkit_runs", {
