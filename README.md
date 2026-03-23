@@ -1,27 +1,64 @@
 # Sandkit
 
-Sandkit is a helper and cli for building production grade apps with Vercel Sandbox.
+Sandkit is a TypeScript toolkit for building durable app workflows on Vercel Sandbox.
 
-https://vercel.com/docs/vercel-sandbox/sdk-reference
+It keeps two paths explicit:
 
-### How to use
+- `workspace.sandbox.runCommand(...)` for durable, one-command-at-a-time work
+- `openSession()` / `attachSession()` for a live leased sandbox when you need an interactive process
+
+Provider-specific behavior still matters, but the public API stays centered on workspaces, policies, and durable state.
+
+## Install
+
+```sh
+npm install sandkit
+```
+
+With Drizzle:
+
+```sh
+npm install sandkit drizzle-orm
+```
+
+## Quick Start
 
 ```ts
-// lib/sandkit.ts
-import { sandkit } from "sandkit";
+import { sandkit, allowServices, codex, gemini } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { allowServices, codex, gemini } from "sandkit";
 import { db } from "@/db";
 
-const sandkit = sandkit({
+const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
   policy: allowServices([codex(), gemini()]),
 });
+
+const workspace = await appSandkit.createWorkspace();
+
+await workspace.sandbox.runCommand({
+  command: "sh",
+  args: ["-lc", "echo 'hello world' > ./hello.txt"],
+});
+
+const result = await workspace.sandbox.runCommand({
+  command: "cat",
+  args: ["./hello.txt"],
+});
+
+console.log(result.stdout);
 ```
 
-`codex()` reads `CODEX_API_KEY`, `gemini()` reads `GEMINI_API_KEY`, and `github()` reads `GITHUB_TOKEN` at apply time. For one-off overrides, pass an explicit secret only on the run:
+## Policies
+
+Service presets read default credentials from the environment when the policy is applied:
+
+- `codex()` reads `CODEX_API_KEY`
+- `gemini()` reads `GEMINI_API_KEY`
+- `github()` reads `GITHUB_TOKEN`
+
+For one-off overrides, pass the secret only on that run:
 
 ```ts
 await workspace.sandbox.runCommand({
@@ -31,220 +68,72 @@ await workspace.sandbox.runCommand({
 });
 ```
 
-```ts
-// api/sandkit-sample/route.ts
-import { sandkit } from "@/lib/sandkit";
-
-export async function POST() {
-  const workspace = await sandkit.createWorkspace();
-  await workspace.sandbox.runCommand({
-    command: "sh",
-    args: ["-lc", "echo 'hello world' > ./hello.txt"],
-  });
-  return new Response(JSON.stringify({ workspaceId: workspace.id }), {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
-    },
-  });
-}
-```
+Durable default policy lives on the workspace:
 
 ```ts
-// api/sandkit-sample/workspaces/[id]/route.ts
-import { sandkit } from "@/lib/sandkit";
-
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const workspace = await sandkit.getWorkspace(id);
-  await workspace.setPolicy(allowServices([codex()]));
-  const result = await workspace.sandbox.runCommand({
-    command: "cat",
-    args: ["./hello.txt"],
-  });
-  return new Response(JSON.stringify({ output: result.stdout }), {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
-    },
-  });
-}
+await workspace.setPolicy(allowServices([codex()]));
 ```
 
-### Drizzle ORM Adapter
+## Live Sessions
 
-```sh
-npm install sandkit drizzle-orm
-```
-
-#### Example Usage
+Use a session only when you need a running process or a public URL:
 
 ```ts
-import { sandkit } from "sandkit";
+const session = await workspace.sandbox.openSession();
+
+await session.exec({
+  command: "sh",
+  args: ["-lc", "python3 -m http.server 3000"],
+});
+
+const url = await session.url(3000);
+await session.commit();
+```
+
+`runCommand()` and a live session are intentionally separate. If a session is active, attach to it or commit it before running another durable command.
+
+## Drizzle Adapter
+
+The generated schema exports the canonical workspace table as `sandkitWorkspaces`.
+
+```ts
+import { sandkit, allowServices, codex } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { db } from "@/db";
+import { db, schema } from "@/db";
 
-const sandkit = sandkit({
+const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
+    workspaces: schema.sandkitWorkspaces,
   }),
   policy: allowServices([codex()]),
 });
 ```
 
-The generated schema exports a canonical workspace table as `sandkitWorkspaces`.
-
-If you use custom table names, pass an explicit `workspaces` table to `drizzleAdapter`:
-
-```ts
-const sandkit = sandkit({
-  database: drizzleAdapter(db, {
-    provider: "sqlite",
-    workspaces: schema.sandkitWorkspaceTable,
-  }),
-});
-```
-
-#### Schema generation & migration
+Generate schema:
 
 ```sh
-# Explicit path
-npx @giselles-ai/sandkit@latest generate --adapter drizzle --provider sqlite
-
-# Or let discovery infer provider from a Drizzle repository
-npx @giselles-ai/sandkit@latest generate
+npx sandkit generate --adapter drizzle --provider sqlite
 npx drizzle-kit generate
 ```
 
-### Codex Subagent: `lilas`
+If you already have a Drizzle repo, provider discovery can infer the dialect:
 
-`lilas` is the implementation-focused Sandkit subagent for concrete, scoped code changes once the relevant code path is known.
-
-Use `lilas` when the task is already well framed and the main need is execution:
-
-- implement a specific feature or option
-- fix a localized bug
-- refactor one module to clarify an invariant
-- make a lifecycle change inside an already identified Sandkit path
-
-Do not use `lilas` for open-ended exploration, broad architecture work, or speculative cleanup across unrelated areas.
-
-#### What Makes A Good `lilas` Prompt
-
-A strong prompt gives `lilas`:
-
-- one concrete task
-- a narrow file or subsystem scope
-- any invariant that must be preserved
-- the most relevant validation target
-
-Good:
-
-```text
-Use the `lilas` subagent.
-
-Task:
-- Fix snapshot restore behavior in `packages/sandkit/src/core/workspace.ts`.
-
-Constraints:
-- Preserve the current public API.
-- Keep resolve, execute, commit, and persist phases explicit.
-- Do not refactor unrelated workspace code.
-
-Validation:
-- Run the most relevant test or local command for workspace sandbox lifecycle.
+```sh
+npx sandkit generate
 ```
 
-Weak:
+## Examples
 
-```text
-Use the `lilas` subagent to improve sandbox architecture.
-```
+- [`examples/sandbox-openclaw`](/Users/satoshi/repo/giselles-ai/sandkit/examples/sandbox-openclaw) shows a production-oriented live session flow with OpenClaw on Vercel Sandbox.
+- [`smoke/drizzle-sample`](/Users/satoshi/repo/giselles-ai/sandkit/smoke/drizzle-sample) shows schema generation and Drizzle integration.
 
-The weak version is too broad. `lilas` works best when the task already has a clear target.
+## Status
 
-#### Default Template
+Sandkit is still early, but the core paths are already exercised in local smoke coverage:
 
-```text
-Use the `lilas` subagent.
-
-Task:
-- <one specific implementation task>
-
-Scope:
-- Work only in <files or subsystem>.
-- Read only the code paths needed to make the change safely.
-
-Constraints:
-- Follow `docs/coding-principles.md`.
-- Prefer the smallest coherent change that fully solves the task.
-- Do not broaden scope, rewrite unrelated areas, or do speculative cleanup.
-
-Validation:
-- Run the most relevant local test or command in scope.
-
-Report:
-- Summarize what changed, how it was validated, and any remaining gaps.
-```
-
-#### Targeted Refactor Template
-
-```text
-Use the `lilas` subagent.
-
-Task:
-- Refactor <file or module> to make <specific behavior or invariant> clearer.
-
-Constraints:
-- Preserve behavior.
-- Prefer direct designs, explicit names, and constrained boundaries.
-- Prefer named transition helpers over ad hoc state changes when lifecycle rules are involved.
-- Avoid speculative cleanup outside the touched path.
-
-Validation:
-- Run the most relevant local check for the refactored behavior.
-
-Report:
-- Summarize the design change and why it is clearer now.
-```
-
-#### Bug Fix Template
-
-```text
-Use the `lilas` subagent.
-
-Task:
-- Fix <bug> in <file or subsystem>.
-
-Constraints:
-- Find the smallest safe fix.
-- Do not add abstraction unless it removes real complexity.
-- Add or update a focused test if there is an existing test path for this behavior.
-
-Validation:
-- Run the most relevant test or command for the changed behavior.
-
-Report:
-- Summarize the root cause, the fix, and any remaining risk.
-```
-
-#### Sandkit Lifecycle Template
-
-```text
-Use the `lilas` subagent.
-
-Task:
-- Implement <lifecycle-related change>.
-
-Constraints:
-- Keep the public API simple.
-- Encode lifecycle rules in types, names, boundaries, or transition helpers rather than prose.
-- Keep resolve, execute, commit, and persist phases explicit where relevant.
-- Let provider-specific semantics shape internal types instead of flattening them away.
-
-Validation:
-- Run the most relevant lifecycle-focused local command or test.
-
-Report:
-- Summarize the lifecycle model after the change and any remaining edge cases.
-```
+- workspace create and reload
+- durable `runCommand()` execution
+- workspace policy and per-run override
+- Drizzle schema generation
+- live session lifecycle on Vercel Sandbox
