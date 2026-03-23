@@ -2,10 +2,14 @@ import { describe, expect, test } from "bun:test";
 
 import {
   OPENCLAW_STARTUP_LEASE_CUSHION_MS,
+  bootstrapOpenClawInWorkspace,
   ensureGatewayRunning,
+  repairOpenClawInSession,
+  updateControlUiConfigForSession,
   readSessionToken,
   withRetry,
 } from "./openclaw-sandbox";
+import type { OpenClawSessionRecord, OpenClawSessionRecordPhase } from "./openclaw-store";
 
 type CommandResult = {
   readonly exitCode: number;
@@ -16,18 +20,29 @@ type CommandResult = {
 type FakeCommandCall = {
   command: string;
   args: string[];
+  policy?: unknown;
 };
 
 type FakeExecResult = CommandResult;
+type FakeSessionExecInput = {
+  command: string;
+  args?: readonly string[];
+  policy?: unknown;
+};
+type FakeRunCommandInput = {
+  command: string;
+  args?: readonly string[];
+};
 
 type FakeSessionExec = {
   (command: string, args: string[]): Promise<FakeExecResult>;
-  (input: { command: string; args?: readonly string[] }): Promise<FakeExecResult>;
+  (input: FakeSessionExecInput): Promise<FakeExecResult>;
 };
 
 type FakeSessionHandle = {
   url: (port: number) => Promise<string>;
   exec: FakeSessionExec;
+  setPolicy: (policy: unknown) => Promise<void>;
   startProcess: {
     (
       command: string,
@@ -50,6 +65,11 @@ type FakeSessionHandle = {
   commit: () => Promise<void>;
 };
 
+type FakeRunCommand = {
+  (command: string, args: string[]): Promise<FakeExecResult>;
+  (input: FakeRunCommandInput): Promise<FakeExecResult>;
+};
+
 type FakeWorkspaceLease = {
   sandboxId: string;
   remainingMs: number;
@@ -59,6 +79,13 @@ type FakeWorkspaceLease = {
 
 type FakeWorkspaceHandle = {
   id: string;
+  descriptor: {
+    id: string;
+    name: string;
+    status: "active" | "inactive" | "archived";
+    createdAt: string;
+    updatedAt: string;
+  };
   record: {
     id: string;
     status: "active" | "inactive" | "archived";
@@ -71,10 +98,7 @@ type FakeWorkspaceHandle = {
     getActiveLease: () => Promise<FakeWorkspaceLease | null>;
     attachSession: () => Promise<FakeSessionHandle>;
     openSession: () => Promise<FakeSessionHandle>;
-    runCommand: {
-      (command: string, args: string[]): Promise<FakeExecResult>;
-      (input: { command: string; args?: readonly string[] }): Promise<FakeExecResult>;
-    };
+    runCommand: FakeRunCommand;
   };
 };
 
@@ -83,8 +107,27 @@ function createRuntimeConfig() {
     installSpec: "openclaw@latest",
     aiGatewayApiUrl: "https://api.example.com",
     aiGatewayModel: "gpt-4o-mini",
-    gatewayApiKey: "test-key",
     gatewayPort: 3000,
+  };
+}
+
+function createOpenClawSessionRecord(
+  id: string,
+  phase: OpenClawSessionRecordPhase = "ready",
+): OpenClawSessionRecord {
+  return {
+    id,
+    workspace_id: "openclaw-production",
+    sandbox_id: null,
+    phase,
+    install_spec: "openclaw@latest",
+    public_url: null,
+    last_healthy_at: null,
+    error_code: null,
+    error_message: null,
+    started_at: new Date(),
+    updated_at: new Date(),
+    finished_at: null,
   };
 }
 
@@ -92,9 +135,10 @@ function createFakeSession() {
   const commandLog: FakeCommandCall[] = [];
   let bootstrapCheckCalls = 0;
   const extendTimeoutCalls: number[] = [];
+  let setPolicyCalls = 0;
 
   const exec: FakeSessionExec = (async (
-    commandOrInput: string | { command: string; args?: readonly string[] },
+    commandOrInput: string | FakeSessionExecInput,
     argsInput: readonly string[] = [],
   ) => {
     const command = typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
@@ -102,7 +146,8 @@ function createFakeSession() {
       typeof commandOrInput === "string" ? (argsInput ?? []) : (commandOrInput.args ?? []);
 
     const commandLine = `${command} ${args.join(" ")}`;
-    commandLog.push({ command, args: [...args] });
+    const policy = typeof commandOrInput === "string" ? undefined : commandOrInput.policy;
+    commandLog.push({ command, args: [...args], policy });
 
     if (commandLine.includes("test -x '/vercel/sandbox/npm-global/bin/openclaw'")) {
       bootstrapCheckCalls += 1;
@@ -135,6 +180,9 @@ function createFakeSession() {
   const session: FakeSessionHandle = {
     url: async (_port?: number) => "https://sb-2f9avnd8iah9.vercel.run",
     exec,
+    setPolicy: async (_policy) => {
+      setPolicyCalls += 1;
+    },
     startProcess: async (_commandOrInput) => ({
       processId: "123",
       wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
@@ -150,6 +198,7 @@ function createFakeSession() {
     session,
     getBootstrapCheckCalls: () => bootstrapCheckCalls,
     getExtendTimeoutCalls: () => extendTimeoutCalls.slice(),
+    getSetPolicyCalls: () => setPolicyCalls,
   };
 }
 
@@ -161,22 +210,37 @@ function createWorkspaceHarness(
     shouldOpenSession?: boolean;
   },
 ) {
-  const { commandLog, session, getBootstrapCheckCalls, getExtendTimeoutCalls } =
-    createFakeSession();
+  const {
+    commandLog,
+    session,
+    getBootstrapCheckCalls,
+    getExtendTimeoutCalls,
+    getSetPolicyCalls: getSessionSetPolicyCalls,
+  } = createFakeSession();
   let activeLease: FakeWorkspaceLease | null = firstLease;
   let getActiveLeaseCalls = 0;
   let attachSessionCalls = 0;
   let openSessionCalls = 0;
+  let setPolicyCalls = 0;
 
   const workspace: FakeWorkspaceHandle = {
     id: "openclaw-production",
+    descriptor: {
+      id: "openclaw-production",
+      name: "OpenClaw Production",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
     record: {
       id: "openclaw-production",
       status: "active",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
-    setPolicy: async () => undefined,
+    setPolicy: async () => {
+      setPolicyCalls += 1;
+    },
     sandbox: {
       getActiveLease: async () => {
         getActiveLeaseCalls += 1;
@@ -213,12 +277,95 @@ function createWorkspaceHarness(
     session,
     getBootstrapCheckCalls,
     getExtendTimeoutCalls,
+    getSessionSetPolicyCalls,
+    getSetPolicyCalls: () => setPolicyCalls,
     calls: {
       getActiveLease: () => getActiveLeaseCalls,
       attachSession: () => attachSessionCalls,
       openSession: () => openSessionCalls,
     },
   };
+}
+
+function createBootstrapWorkspaceForTest(): {
+  commandLog: FakeCommandCall[];
+  workspace: FakeWorkspaceHandle;
+} {
+  const commandLog: FakeCommandCall[] = [];
+
+  const workspace: FakeWorkspaceHandle = {
+    id: "openclaw-bootstrap",
+    descriptor: {
+      id: "openclaw-bootstrap",
+      name: "OpenClaw Bootstrap",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    record: {
+      id: "openclaw-bootstrap",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    setPolicy: async () => undefined,
+    sandbox: {
+      getActiveLease: async () => null,
+      attachSession: async () => {
+        throw new Error("attachSession was not expected for this bootstrap-only test");
+      },
+      openSession: async () => {
+        throw new Error("openSession was not expected for this bootstrap-only test");
+      },
+      runCommand: (async (
+        commandOrInput: string | FakeRunCommandInput,
+        argsInput: readonly string[] = [],
+      ) => {
+        const command =
+          typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
+        const args =
+          typeof commandOrInput === "string"
+            ? [...(argsInput ?? [])]
+            : [...(commandOrInput.args ?? [])];
+        commandLog.push({ command, args: [...args] });
+
+        const commandLine = `${command} ${args.join(" ")}`;
+        if (commandLine.includes("npm install -g --prefix /vercel/sandbox/npm-global")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+
+        if (commandLine.includes("openclaw.json")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+
+        if (commandLine.includes("start-openclaw-gateway.sh")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }) as FakeRunCommand,
+    },
+  };
+
+  return { commandLog, workspace };
+}
+
+function extractBase64ConfigPayload(commandLog: FakeCommandCall[]): string | null {
+  const command = commandLog.find(({ command, args }) => {
+    const line = `${command} ${args.join(" ")}`;
+    return (
+      line.includes("printf '%s'") && line.includes("base64 -d") && line.includes("openclaw.json")
+    );
+  });
+
+  if (!command) {
+    return null;
+  }
+
+  const line = `${command.command} ${command.args.join(" ")}`;
+  const match = line.match(/printf '%s' '([^']+)' \| base64 -d > '([^']+openclaw\.json)'/);
+
+  return match?.[1] ?? null;
 }
 
 function hasCommand(commandLog: FakeCommandCall[], needle: string): boolean {
@@ -262,7 +409,7 @@ describe("openclaw sandbox retry behavior", () => {
 
   test("readSessionToken reads token file through bash -lc and trims output", async () => {
     const exec: FakeSessionExec = (async (
-      commandOrInput: string | { command: string; args?: readonly string[] },
+      commandOrInput: string | FakeSessionExecInput,
       argsInput: readonly string[] = [],
     ) => {
       const command = typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
@@ -279,9 +426,8 @@ describe("openclaw sandbox retry behavior", () => {
     const session: FakeSessionHandle = {
       url: async (_port?: number) => "",
       exec,
-      startProcess: async (
-        _commandOrInput: string | { command: string; args?: readonly string[] },
-      ) => ({
+      setPolicy: async () => undefined,
+      startProcess: async (_commandOrInput: string | FakeSessionExecInput) => ({
         processId: "",
         wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
       }),
@@ -300,6 +446,7 @@ describe("openclaw sandbox retry behavior", () => {
       exec: (async () => {
         throw new Error("missing token file");
       }) as FakeSessionExec,
+      setPolicy: async () => undefined,
       startProcess: async (_commandOrInput) => ({
         processId: "",
         wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
@@ -321,11 +468,18 @@ describe("openclaw sandbox retry behavior", () => {
       expiresAt: "2026-03-23T09:00:00.000Z",
       observedAt: "2026-03-23T08:59:00.000Z",
     };
-    const { workspace, commandLog, getBootstrapCheckCalls, getExtendTimeoutCalls, calls } =
-      createWorkspaceHarness(existingLease, {
-        shouldAttachSession: true,
-        shouldOpenSession: false,
-      });
+    const {
+      workspace,
+      commandLog,
+      getBootstrapCheckCalls,
+      getExtendTimeoutCalls,
+      getSessionSetPolicyCalls,
+      getSetPolicyCalls,
+      calls,
+    } = createWorkspaceHarness(existingLease, {
+      shouldAttachSession: true,
+      shouldOpenSession: false,
+    });
     const requiredLeaseMs = 240_000;
 
     const originalFetch = globalThis.fetch;
@@ -334,7 +488,7 @@ describe("openclaw sandbox retry behavior", () => {
         new Response("ready", { status: 200 })) as unknown as typeof fetch;
       const { url } = await ensureGatewayRunning(
         workspace,
-        { id: "session-1" },
+        createOpenClawSessionRecord("session-1"),
         async (_id, update) => {
           updates.push(update);
         },
@@ -356,6 +510,8 @@ describe("openclaw sandbox retry behavior", () => {
       ).toBeGreaterThanOrEqual(1);
       expect(getCommandCount(commandLog, "openclaw.json")).toBeGreaterThanOrEqual(1);
       expect(getCommandCount(commandLog, "start-openclaw-gateway.sh")).toBeGreaterThanOrEqual(1);
+      expect(getSetPolicyCalls()).toBe(0);
+      expect(getSessionSetPolicyCalls()).toBe(1);
       expect(hasCommand(commandLog, "cat '/vercel/sandbox/home/.openclaw/auth-token.txt'")).toBe(
         true,
       );
@@ -381,12 +537,19 @@ describe("openclaw sandbox retry behavior", () => {
       expiresAt: "2026-03-23T09:00:00.000Z",
       observedAt: "2026-03-23T08:59:00.000Z",
     };
-    const { workspace, commandLog, getBootstrapCheckCalls, getExtendTimeoutCalls, calls } =
-      createWorkspaceHarness(null, {
-        leaseAfterOpenSession,
-        shouldAttachSession: false,
-        shouldOpenSession: true,
-      });
+    const {
+      workspace,
+      commandLog,
+      getBootstrapCheckCalls,
+      getExtendTimeoutCalls,
+      getSetPolicyCalls,
+      getSessionSetPolicyCalls,
+      calls,
+    } = createWorkspaceHarness(null, {
+      leaseAfterOpenSession,
+      shouldAttachSession: false,
+      shouldOpenSession: true,
+    });
 
     const originalFetch = globalThis.fetch;
     try {
@@ -394,7 +557,7 @@ describe("openclaw sandbox retry behavior", () => {
         new Response("ready", { status: 200 })) as unknown as typeof fetch;
       const { url } = await ensureGatewayRunning(
         workspace,
-        { id: "session-fresh" },
+        createOpenClawSessionRecord("session-fresh"),
         async (_id, update) => {
           updates.push(update);
         },
@@ -419,6 +582,8 @@ describe("openclaw sandbox retry behavior", () => {
       ).toBeGreaterThanOrEqual(1);
       expect(getCommandCount(commandLog, "openclaw.json")).toBeGreaterThanOrEqual(1);
       expect(getCommandCount(commandLog, "start-openclaw-gateway.sh")).toBeGreaterThanOrEqual(1);
+      expect(getSetPolicyCalls()).toBe(0);
+      expect(getSessionSetPolicyCalls()).toBe(1);
 
       expect(updates.some((update) => update.phase === "repairing")).toBe(true);
       expect(updates.some((update) => update.phase === "ready")).toBe(true);
@@ -433,7 +598,7 @@ describe("openclaw sandbox retry behavior", () => {
     const session: FakeSessionHandle = {
       url: async (_port?: number) => "https://sb-2f9avnd8iah9.vercel.run",
       exec: (async (
-        commandOrInput: string | { command: string; args?: readonly string[] },
+        commandOrInput: string | FakeSessionExecInput,
         argsInput: readonly string[] = [],
       ) => {
         const command =
@@ -451,9 +616,8 @@ describe("openclaw sandbox retry behavior", () => {
 
         return { exitCode: 0, stdout: "", stderr: "" };
       }) as FakeSessionExec,
-      startProcess: async (
-        _commandOrInput: string | { command: string; args?: readonly string[] },
-      ) => ({
+      setPolicy: async () => undefined,
+      startProcess: async (_commandOrInput: string | FakeSessionExecInput) => ({
         processId: "123",
         wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
       }),
@@ -462,15 +626,25 @@ describe("openclaw sandbox retry behavior", () => {
       },
       commit: async () => undefined,
     };
+    let setPolicyCalls = 0;
     const workspace: FakeWorkspaceHandle = {
       id: "openclaw-production",
+      descriptor: {
+        id: "openclaw-production",
+        name: "OpenClaw Production",
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
       record: {
         id: "openclaw-production",
         status: "active",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
-      setPolicy: async () => undefined,
+      setPolicy: async () => {
+        setPolicyCalls += 1;
+      },
       sandbox: {
         getActiveLease: async () => ({
           sandboxId: "sbx_abc123",
@@ -480,6 +654,7 @@ describe("openclaw sandbox retry behavior", () => {
         }),
         attachSession: async () => session,
         openSession: async () => session,
+        runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
       },
     };
 
@@ -490,7 +665,7 @@ describe("openclaw sandbox retry behavior", () => {
         new Response("ready", { status: 200 })) as unknown as typeof fetch;
       const start = ensureGatewayRunning(
         workspace,
-        { id: "session-fresh-failed-bootstrap" },
+        createOpenClawSessionRecord("session-fresh-failed-bootstrap", "repairing"),
         async (_id, update) => {
           updates.push(update);
         },
@@ -501,6 +676,7 @@ describe("openclaw sandbox retry behavior", () => {
       await expect(start).rejects.toThrow(
         "OpenClaw bootstrap artifacts are still missing for session session-fresh-failed-bootstrap after repair attempt.",
       );
+      expect(setPolicyCalls).toBe(0);
       expect(extendTimeoutCalls).toEqual([OPENCLAW_STARTUP_LEASE_CUSHION_MS - 60_000]);
       expect(updates.some((update) => update.phase === "failed")).toBe(true);
       const failed = updates.find((update) => update.phase === "failed") as
@@ -537,7 +713,7 @@ describe("openclaw sandbox retry behavior", () => {
         new Response("ready", { status: 200 })) as unknown as typeof fetch;
       await ensureGatewayRunning(
         workspace,
-        { id: "session-no-extend-needed" },
+        createOpenClawSessionRecord("session-no-extend-needed"),
         async () => undefined,
         createRuntimeConfig(),
         240_000,
@@ -547,5 +723,136 @@ describe("openclaw sandbox retry behavior", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("bootstrapOpenClawInWorkspace writes sandbox-managed API key into config", async () => {
+    const { workspace, commandLog } = createBootstrapWorkspaceForTest();
+
+    await bootstrapOpenClawInWorkspace(workspace, createRuntimeConfig());
+
+    const encodedConfig = extractBase64ConfigPayload(commandLog);
+    expect(encodedConfig).toBeTruthy();
+
+    const openclawConfig = JSON.parse(
+      Buffer.from(encodedConfig as string, "base64").toString("utf8"),
+    );
+    expect(openclawConfig).toMatchObject({
+      models: {
+        providers: {
+          "sandbox-gateway": {
+            apiKey: "sandbox-managed",
+          },
+        },
+      },
+    });
+    expect(openclawConfig).not.toMatchObject({
+      models: {
+        providers: {
+          "sandbox-gateway": {
+            apiKey: "test-key",
+          },
+        },
+      },
+    });
+  });
+
+  test("repairOpenClawInSession rewrites OpenClaw config without real API key", async () => {
+    const encodedCommandLog: FakeCommandCall[] = [];
+    const session: FakeSessionHandle = {
+      url: async (_port?: number) => "",
+      exec: (async (
+        commandOrInput: string | FakeSessionExecInput,
+        argsInput: readonly string[] = [],
+      ) => {
+        const command =
+          typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
+        const args = typeof commandOrInput === "string" ? argsInput : (commandOrInput.args ?? []);
+        encodedCommandLog.push({ command, args: [...args] });
+
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }) as FakeSessionExec,
+      setPolicy: async () => undefined,
+      startProcess: async () => ({
+        processId: "",
+        wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      }),
+      extendTimeout: async () => undefined,
+      commit: async () => undefined,
+    };
+
+    await repairOpenClawInSession(session, createRuntimeConfig());
+
+    const encodedConfig = extractBase64ConfigPayload(encodedCommandLog);
+    expect(encodedConfig).toBeTruthy();
+    const openclawConfig = JSON.parse(
+      Buffer.from(encodedConfig as string, "base64").toString("utf8"),
+    );
+    expect(openclawConfig).toMatchObject({
+      models: {
+        providers: {
+          "sandbox-gateway": {
+            apiKey: "sandbox-managed",
+          },
+        },
+      },
+    });
+  });
+
+  test("updateControlUiConfigForSession rewrites OpenClaw config without real API key", async () => {
+    const commandLog: FakeCommandCall[] = [];
+    const session: FakeSessionHandle = {
+      url: async (_port?: number) => "",
+      exec: (async (
+        commandOrInput: string | FakeSessionExecInput,
+        argsInput: readonly string[] = [],
+      ) => {
+        const command =
+          typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
+        const args = typeof commandOrInput === "string" ? argsInput : (commandOrInput.args ?? []);
+        commandLog.push({ command, args: [...args] });
+        if (
+          `${command} ${args.join(" ")}`.includes(
+            "cat '/vercel/sandbox/home/.openclaw/auth-token.txt'",
+          )
+        ) {
+          return { exitCode: 0, stdout: "token-from-openclaw", stderr: "" };
+        }
+
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }) as FakeSessionExec,
+      setPolicy: async () => undefined,
+      startProcess: async () => ({
+        processId: "",
+        wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      }),
+      extendTimeout: async () => undefined,
+      commit: async () => undefined,
+    };
+
+    await updateControlUiConfigForSession(
+      session,
+      "https://sb-2f9avnd8iah9.vercel.run",
+      createRuntimeConfig(),
+    );
+
+    const encodedConfig = extractBase64ConfigPayload(commandLog);
+    expect(encodedConfig).toBeTruthy();
+    const openclawConfig = JSON.parse(
+      Buffer.from(encodedConfig as string, "base64").toString("utf8"),
+    );
+    expect(openclawConfig).toMatchObject({
+      gateway: {
+        controlUi: {
+          allowedOrigins: ["https://sb-2f9avnd8iah9.vercel.run"],
+        },
+      },
+      models: {
+        providers: {
+          "sandbox-gateway": {
+            apiKey: "sandbox-managed",
+          },
+        },
+      },
+    });
   });
 });

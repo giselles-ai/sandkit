@@ -1,3 +1,4 @@
+import { allowServices, aiGateway } from "sandkit";
 import type { PublicWorkspaceHandle } from "sandkit";
 
 import {
@@ -16,12 +17,12 @@ const OPENCLAW_LOG_PATH = `${OPENCLAW_CONFIG_DIR}/gateway.log`;
 const NODE_BIN_DIR = "/vercel/runtimes/node24/bin";
 const CONTROL_UI_BOOTSTRAP_PATH = "/__openclaw/control-ui-config.json";
 export const OPENCLAW_STARTUP_LEASE_CUSHION_MS = 180_000;
+const OPENCLAW_DUMMY_GATEWAY_API_KEY = "sandbox-managed";
 
 export type OpenClawSandboxConfig = {
   installSpec: string;
   aiGatewayApiUrl: string;
   aiGatewayModel: string;
-  gatewayApiKey: string;
   gatewayPort: number;
 };
 
@@ -55,6 +56,20 @@ export function withRetry<T>(
 
     throw new Error("Retry loop did not complete.");
   })();
+}
+
+async function applySessionPolicy(
+  session: OpenClawSessionHandle,
+  options: OpenClawSandboxConfig,
+): Promise<void> {
+  await session.setPolicy(allowServices([aiGateway({ baseUrl: options.aiGatewayApiUrl })]));
+}
+
+async function transitionToLiveGatewayPolicy(
+  activeSession: OpenClawSessionHandle,
+  options: OpenClawSandboxConfig,
+): Promise<void> {
+  await applySessionPolicy(activeSession, options);
 }
 
 function buildOpenClawConfig(
@@ -99,7 +114,7 @@ function buildOpenClawConfig(
         providers: {
           "sandbox-gateway": {
             baseUrl: options.aiGatewayApiUrl,
-            apiKey: options.gatewayApiKey,
+            apiKey: OPENCLAW_DUMMY_GATEWAY_API_KEY,
             authHeader: true,
             api: "openai-completions",
             models: [
@@ -621,7 +636,6 @@ export async function ensureGatewayRunning(
     didRepairBootstrap = true;
     bootstrapRepairStep.success({ bootstrapReady });
   }
-
   if (!bootstrapReady) {
     const bootstrapRepairMode = didRepairBootstrap ? "repair attempt" : "initial bootstrap check";
     const finalBootstrapFailureStep = logTimedStepStart("bootstrapMissingFailure", {
@@ -643,6 +657,7 @@ export async function ensureGatewayRunning(
       `OpenClaw bootstrap artifacts are still missing for session ${openclawSession.id} after ${bootstrapRepairMode}.`,
     );
   }
+  await transitionToLiveGatewayPolicy(activeSession, options);
 
   const controlUiConfigStep = logTimedStepStart("updateControlUiConfig", {
     workspaceId: workspace.id,

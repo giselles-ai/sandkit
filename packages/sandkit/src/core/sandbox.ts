@@ -21,6 +21,11 @@ export interface WorkspaceSessionHandle {
   exec(command: string, args: string[]): Promise<CommandResult>;
   exec(input: SandboxRunCommandOptions): Promise<CommandResult>;
   commit(): Promise<void>;
+  /**
+   * Sets a non-durable, session-scoped policy override for subsequent session
+   * commands and process launches.
+   */
+  setPolicy(policy: WorkspacePolicy): Promise<void>;
   startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess>;
   startProcess(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess>;
   url(port: number): Promise<string>;
@@ -55,6 +60,11 @@ interface SessionStateValidator {
 
 interface SessionLeaseLifecycle {
   readonly onLeaseRefresh?: () => Promise<void>;
+}
+
+interface SessionPolicyLifecycle {
+  readonly initialSessionPolicy?: WorkspacePolicy;
+  readonly onPolicyChange?: (policy: WorkspacePolicy) => Promise<void>;
 }
 
 type CommitHook = (commit: SandboxCommit) => Promise<void>;
@@ -256,8 +266,10 @@ export class ManagedSession implements WorkspaceSessionHandle {
   readonly #driver: SandboxDriver;
   readonly #onCommit?: CommitHook;
   readonly #resolveDefaultPolicy: DefaultPolicyResolver;
+  readonly #onPolicyChange?: (policy: WorkspacePolicy) => Promise<void>;
   readonly #stateValidator?: SessionStateValidator;
   readonly #leaseLifecycle?: SessionLeaseLifecycle;
+  #sessionPolicyOverride: WorkspacePolicy | undefined;
   #isActive = true;
 
   constructor(
@@ -266,12 +278,15 @@ export class ManagedSession implements WorkspaceSessionHandle {
     onCommit?: CommitHook,
     stateValidator?: SessionStateValidator,
     leaseLifecycle?: SessionLeaseLifecycle,
+    policyLifecycle?: SessionPolicyLifecycle,
   ) {
     this.#driver = driver;
     this.#resolveDefaultPolicy = resolveDefaultPolicy;
     this.#onCommit = onCommit;
     this.#stateValidator = stateValidator;
     this.#leaseLifecycle = leaseLifecycle;
+    this.#onPolicyChange = policyLifecycle?.onPolicyChange;
+    this.#sessionPolicyOverride = policyLifecycle?.initialSessionPolicy;
   }
 
   get id(): string {
@@ -304,6 +319,15 @@ export class ManagedSession implements WorkspaceSessionHandle {
     }
   }
 
+  async setPolicy(policy: WorkspacePolicy): Promise<void> {
+    await this.assertSessionActive();
+    this.#sessionPolicyOverride = policy;
+    await this.#driver.applyPolicy(policy);
+    if (this.#onPolicyChange !== undefined) {
+      await this.#onPolicyChange(policy);
+    }
+  }
+
   async startProcess(command: string, args: string[]): Promise<WorkspaceSessionProcess>;
   async startProcess(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess>;
   async startProcess(
@@ -321,6 +345,7 @@ export class ManagedSession implements WorkspaceSessionHandle {
         ? {
             command: inputOrCommand,
             args,
+            policy: this.#sessionPolicyOverride,
             onStdout: undefined,
             onStderr: undefined,
           }
@@ -332,9 +357,13 @@ export class ManagedSession implements WorkspaceSessionHandle {
       throw new Error("Sandbox process args must be an array.");
     }
 
+    const policy = await this.resolveSessionPolicy(normalized.policy);
+    await this.#driver.applyPolicy(policy);
+
     return startProcess.call(this.#driver, {
       command: normalized.command,
       args: [...normalized.args],
+      policy,
       onStdout: normalized.onStdout,
       onStderr: normalized.onStderr,
     });
@@ -371,15 +400,27 @@ export class ManagedSession implements WorkspaceSessionHandle {
       return {
         command: inputOrCommand,
         args,
-        policy: await this.#resolveDefaultPolicy(),
+        policy: await this.resolveSessionPolicy(),
       };
     }
 
     return {
       command: inputOrCommand.command,
       args: inputOrCommand.args ?? [],
-      policy: inputOrCommand.policy ?? (await this.#resolveDefaultPolicy()),
+      policy: await this.resolveSessionPolicy(inputOrCommand.policy),
     };
+  }
+
+  private async resolveSessionPolicy(override?: WorkspacePolicy): Promise<WorkspacePolicy> {
+    if (override !== undefined) {
+      return override;
+    }
+
+    if (this.#sessionPolicyOverride !== undefined) {
+      return this.#sessionPolicyOverride;
+    }
+
+    return this.#resolveDefaultPolicy();
   }
 
   private ensureCommandShape(command: string, args: readonly string[]): void {

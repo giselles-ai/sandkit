@@ -183,7 +183,22 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     return this.makeSession(sandbox);
   }
 
+  private async persistSessionPolicy(policy: WorkspacePolicy): Promise<void> {
+    await this.resolveLatestWorkspace();
+    if (!workspaceStateIsSession(this.#sandboxState)) {
+      throw new Error("Cannot persist session policy without an active sandbox session.");
+    }
+
+    await this.persistSandboxState(
+      transitionToSession(this.#sandboxState.sandboxId, this.#sandboxState.lease, policy),
+    );
+  }
+
   private makeSession(sandbox: SandboxDriver): ManagedSession {
+    const sessionPolicy = workspaceStateIsSession(this.#sandboxState)
+      ? this.#sandboxState.sessionPolicy
+      : undefined;
+
     return new ManagedSession(
       sandbox,
       async () => this.resolveDefaultPolicy(),
@@ -203,6 +218,12 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
           await this.refreshSessionLease(sandbox.id, lease);
         },
       },
+      {
+        initialSessionPolicy: sessionPolicy,
+        onPolicyChange: async (policy: WorkspacePolicy) => {
+          await this.persistSessionPolicy(policy);
+        },
+      },
     );
   }
 
@@ -215,7 +236,9 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       throw new Error("Cannot refresh lease for an inactive sandbox session.");
     }
 
-    await this.persistSandboxState(transitionToSession(sandboxId, lease));
+    await this.persistSandboxState(
+      transitionToSession(sandboxId, lease, this.#sandboxState.sessionPolicy),
+    );
   }
 
   private async resolveAttachableSession(): Promise<SandboxDriver | null> {

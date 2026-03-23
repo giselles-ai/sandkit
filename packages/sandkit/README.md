@@ -57,7 +57,7 @@ npm install sandkit drizzle-orm
 ## Quick Start
 
 ```ts
-import { sandkit, allowServices, codex, gemini } from "sandkit";
+import { sandkit, allowServices, codex, gemini, aiGateway } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
 import { db } from "@/db";
 
@@ -82,6 +82,8 @@ await workspace.sandbox.runCommand({
 - `codex()` reads `CODEX_API_KEY`
 - `gemini()` reads `GEMINI_API_KEY`
 - `github()` reads `GITHUB_TOKEN`
+- `aiGateway()` reads `AI_GATEWAY_API_KEY` from host env and allows the hostname (plus wildcard) from `AI_GATEWAY_BASE_URL`.
+  `AI_GATEWAY_BASE_URL` ports are ignored for allow-listing; only host/domain matches are used.
 
 Durable default policy belongs to the workspace: use `createWorkspace({ policy: ... })` when you create it, or `workspace.setPolicy(...)` later. Pass `policy` to `runCommand(...)` for one-off overrides.
 

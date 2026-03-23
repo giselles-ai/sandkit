@@ -216,7 +216,6 @@ function composeSandboxConfig(runtime: OpenClawRuntime): OpenClawSandboxConfig {
     installSpec: runtime.config.openclawInstallSpec,
     aiGatewayApiUrl: runtime.config.aiGatewayApiUrl,
     aiGatewayModel: runtime.config.aiGatewayModel,
-    gatewayApiKey: runtime.config.gatewayApiKey,
     gatewayPort: runtime.config.gatewayPort,
   };
 }

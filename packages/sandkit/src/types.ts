@@ -74,6 +74,10 @@ export interface WorkspaceSessionProcessStartInput {
   readonly command: string;
   readonly args: readonly string[];
   /**
+   * Optional per-call policy override for this session process.
+   */
+  readonly policy?: WorkspacePolicy;
+  /**
    * Callbacks consume chunks from Sandkit's normalized process log stream.
    */
   readonly onStdout?: ((chunk: string) => void) | undefined;
