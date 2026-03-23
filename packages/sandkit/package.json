@@ -109,7 +109,11 @@
     "tsup": "8.5.1"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.44.2",
-    "typescript": "^5"
+    "drizzle-orm": "^0.44.2"
+  },
+  "peerDependenciesMeta": {
+    "drizzle-orm": {
+      "optional": true
+    }
   }
 }
