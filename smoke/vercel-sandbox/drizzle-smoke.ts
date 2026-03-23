@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { drizzleAdapter, sandkit } from "sandkit";
+import { sandkit } from "sandkit";
+import { drizzleAdapter } from "sandkit/adapters/drizzle";
+// Internal-seam smoke: generate command is intentionally imported from package internals.
 
-import { runGenerateCommand } from "../../packages/sandkit/src/cli/generate.ts";
+import { runGenerateCommand } from "./internal-seams.ts";
 
 const SQLITE_PATH = process.env.SMOKE_DRIZZLE_DB_PATH ?? "./smoke-drizzle-workspaces.sqlite";
 const SCHEMA_PATH = "smoke-schema.generated.ts";
@@ -109,7 +111,7 @@ async function runSmoke(): Promise<void> {
     });
 
     const reloaded = await replayApp.getWorkspace(workspace.id);
-    if (reloaded.id !== workspace.id || reloaded.record.name !== expectedName) {
+    if (reloaded.id !== workspace.id || reloaded.descriptor.name !== expectedName) {
       throw new Error("Smoke assertion failed: workspace could not be reloaded");
     }
 

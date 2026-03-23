@@ -1,7 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { runGenerateCommand } from "../../../packages/sandkit/src/cli/generate.ts";
+import { runGenerateCommand } from "../internal-seams.ts";
 
 const outputPath = join(process.cwd(), "generated", "sandkit-schema.generated.ts");
 await mkdir("generated", { recursive: true });

@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import type { CommandResult } from "sandkit";
-
 import {
   OPENCLAW_STARTUP_LEASE_CUSHION_MS,
   ensureGatewayRunning,
   readSessionToken,
   withRetry,
 } from "./openclaw-sandbox";
+
+type CommandResult = {
+  readonly exitCode: number;
+  readonly stderr: string;
+  readonly stdout: string;
+};
 
 type FakeCommandCall = {
   command: string;

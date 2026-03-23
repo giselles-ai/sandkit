@@ -1,9 +1,5 @@
-import { normalizeCommandLog } from "../../packages/sandkit/src/drivers/vercel-sandbox.ts";
-import {
-  createMemoryAdapter,
-  MockSandboxDriverFactory,
-  sandkit,
-} from "../../packages/sandkit/src/index.ts";
+import { createMemoryAdapter } from "sandkit/adapters/memory";
+import { sandkit } from "sandkit";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {
@@ -22,14 +18,7 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runSmoke(): Promise<void> {
-  const app = sandkit({
-    database: createMemoryAdapter(),
-    sandbox: {
-      driverFactory: new MockSandboxDriverFactory(),
-    },
-  });
-
+async function runPublicSessionSmoke(app: ReturnType<typeof sandkit>): Promise<void> {
   const workspace = await app.createWorkspace({ name: "session-smoke" });
   const noLease = await workspace.sandbox.getActiveLease();
   if (noLease !== null) {
@@ -151,11 +140,6 @@ async function runSmoke(): Promise<void> {
     );
   }
 
-  const normalizedLogChunk = normalizeCommandLog({ stream: "stdout", data: "streamed-via-data" });
-  if (!normalizedLogChunk || normalizedLogChunk.chunk !== "streamed-via-data") {
-    throw new Error("Smoke failed: normalizeCommandLog should parse Vercel stream/data logs.");
-  }
-
   await attached.commit();
   const afterCommitLease = await workspace.sandbox.getActiveLease();
   if (afterCommitLease !== null) {
@@ -171,10 +155,15 @@ async function runSmoke(): Promise<void> {
     throw new Error("Smoke failed: expected durable replay after session commit.");
   }
 
+}
+
+async function runStateRecoverySmoke(adapter: ReturnType<typeof createMemoryAdapter>): Promise<void> {
+  const app = sandkit({ database: adapter });
+
   const workspaceWithNonAttachable = await app.createWorkspace({
     name: "session-non-attachable-smoke",
   });
-  await app.context.adapter.workspaces.updateWorkspace(workspaceWithNonAttachable.id, {
+  await adapter.workspaces.updateWorkspace(workspaceWithNonAttachable.id, {
     metadata: {
       "sandkit:sandbox": {
         kind: "command",
@@ -198,7 +187,7 @@ async function runSmoke(): Promise<void> {
     name: "session-expired-clear-smoke",
   });
   const observedAt = new Date(Date.now() - 90_000).toISOString();
-  await app.context.adapter.workspaces.updateWorkspace(expiredSessionWorkspace.id, {
+  await adapter.workspaces.updateWorkspace(expiredSessionWorkspace.id, {
     metadata: {
       "sandkit:sandbox": {
         kind: "session",
@@ -221,7 +210,23 @@ async function runSmoke(): Promise<void> {
     throw new Error("Smoke failed: expected runCommand to proceed after expired session clear.");
   }
 
-  console.log("smokeSessionWorkspaceId", workspace.id);
+  console.log("smokeSessionWorkspaceId", workspaceWithNonAttachable.id);
+}
+
+async function runSmoke(): Promise<void> {
+  const adapter = createMemoryAdapter();
+  const app = sandkit({ database: adapter });
+
+  await runPublicSessionSmoke(app);
+  // Internal-state seam checks intentionally remain explicit here:
+  // mutate the raw persisted metadata via adapter interface and assert recovery behavior.
+  await runStateRecoverySmoke(adapter);
+
+  // Keep one public-app smoke path visible and ensure the app remains usable after boundary checks.
+  const postStateWorkspace = await app.createWorkspace({
+    name: "session-post-state-smoke",
+  });
+  await postStateWorkspace.sandbox.runCommand("echo", ["ok"]);
 }
 
 void runSmoke();

@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite";
 import { pathToFileURL } from "node:url";
 
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { drizzleAdapter, sandkit } from "sandkit";
+import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { sandkit } from "sandkit";
 
 const SQLITE_PATH = process.env.SMOKE_DRIZZLE_SAMPLE_DB_PATH ?? "./smoke-drizzle-workspaces.sqlite";
 const SCHEMA_PATH = "./generated/sandkit-schema.generated.ts";
@@ -27,7 +28,7 @@ async function run(): Promise<void> {
     name: "smoke-drizzle-sample",
   });
   const reloaded = await app.getWorkspace(created.id);
-  console.log(`workspace=${reloaded.id} name=${reloaded.record.name}`);
+  console.log(`workspace=${reloaded.id} name=${reloaded.descriptor.name}`);
   db.close();
 }
 

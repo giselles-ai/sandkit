@@ -1,10 +1,12 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { createMemoryAdapter, sandkit, allowService, codex } from "sandkit";
-import { createBunSqliteAdapter, gemini, github } from "sandkit";
+import { createMemoryAdapter } from "sandkit/adapters/memory";
+import { createBunSqliteAdapter } from "sandkit/adapters/sqlite-bun";
+import { sandkit, allowService, codex, gemini, github } from "sandkit";
+// Internal-seam smoke: policy compile is intentionally validated via package internals.
 
-import { compileVercelNetworkPolicy } from "../../packages/sandkit/src/drivers/vercel-network-policy.ts";
+import { compileVercelNetworkPolicy } from "./internal-seams.ts";
 
 function readAuthorizationHeader(
   policy: ReturnType<typeof compileVercelNetworkPolicy>,

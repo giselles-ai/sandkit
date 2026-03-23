@@ -4,10 +4,10 @@ import {
   allowAll,
   allowService,
   codex,
-  createBunSqliteAdapter,
-  createVercelSandboxDriverFactory,
   sandkit,
 } from "sandkit";
+import { createBunSqliteAdapter } from "sandkit/adapters/sqlite-bun";
+import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 
 const SQLITE_PATH = process.env.SMOKE_CODEX_EXEC_DB_PATH ?? "./smoke-codex-exec.sqlite";
 const SANDBOX_TIMEOUT_MS = 60_000 * 2;

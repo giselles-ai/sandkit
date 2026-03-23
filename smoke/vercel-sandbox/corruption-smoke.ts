@@ -5,13 +5,19 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import {
   allowAll,
-  createMemoryAdapter,
-  drizzleAdapter,
   sandkit,
-  type RunAdapter,
-  type SandkitAdapter,
-  type SandboxDriverFactory,
 } from "sandkit";
+import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { createMemoryAdapter } from "sandkit/adapters/memory";
+import {
+  type InternalRunAdapterContract,
+  type InternalSandkitAdapterContract,
+  type InternalSandboxDriverFactoryContract,
+} from "./internal-seams.ts";
+
+// Internal-seam smoke: this file validates public-path contracts against mocked internals.
+// The following contracts intentionally mirror provider-adapter shapes without importing
+// root-exposed internal implementation types.
 
 const sandkitWorkspaces = sqliteTable("sandkit_workspaces", {
   id: text("id").notNull().primaryKey(),
@@ -141,10 +147,10 @@ async function expectAggregateError(
 }
 
 function createCorruptingAdapter(
-  base: SandkitAdapter,
+  base: InternalSandkitAdapterContract,
   afterCreateRun: (runId: string) => void,
-): SandkitAdapter {
-  const runs: RunAdapter = {
+): InternalSandkitAdapterContract {
+  const runs: InternalRunAdapterContract = {
     async createRun(input) {
       const run = await base.runs.createRun(input);
       afterCreateRun(run.id);
@@ -161,7 +167,7 @@ function createCorruptingAdapter(
   };
 }
 
-function createFailingDriverFactory(): SandboxDriverFactory {
+function createFailingDriverFactory(): InternalSandboxDriverFactoryContract {
   return {
     async createSandbox() {
       return {

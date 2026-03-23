@@ -37,18 +37,30 @@ The public model intentionally hides lifecycle mechanics.
 - Callers should not decide when to snapshot.
 - Callers should not need to know whether the provider resumed from a live session or a snapshot.
 
+## Responsibility Boundaries
+
+This project keeps the public model small by separating ownership and live execution semantics.
+
+| Concept | Ownership | Durability | Public API role | Typical use |
+|---|---|---|---|---|
+| `workspace` | owns durable state | persisted across reload and restart | stable handle owner (`getWorkspace`, `setPolicy`) | policy updates, workspace retrieval |
+| `workspace.sandbox` | lazy boundary only | no owned durable state | entry point (`runCommand`, `openSession`, `attachSession`, `getActiveLease`) | call routing and state-machine resolution |
+| `session` | ephemeral lease | active runtime state only | explicit live object (`exec`, `startProcess`, `url`, `commit`, `extendTimeout`) | running interactive process and obtaining public routes |
+| `policy` | durable default on workspace, override per command | workspace default is stored durably; run snapshots store a redacted effective-policy record only | durable via `setPolicy`, temporary via `runCommand({ policy })` | network boundary configuration |
+
 ## State Set
 
 Sandkit tracks sandbox lifecycle at the workspace level.
 
-### 1. `uninitialized`
+### 1. `cold`
 
-No sandbox has been created for the workspace yet.
+No attachable live session exists for the workspace.
 
 Properties:
 
-- No persisted sandbox metadata exists.
-- First command must create a new provider sandbox.
+- No live session metadata is currently usable.
+- This is the initial state before any sandbox is created.
+- Sandkit may also reconcile expired or unavailable session metadata back to `cold`.
 
 ### 2. `session`
 
@@ -58,7 +70,7 @@ Properties:
 
 - Sandkit stores session-oriented restore information such as `sandboxId`.
 - The provider sandbox may still be running, or may be resumable through provider APIs.
-- This is the normal state after `runCommand(...)`.
+- This is the live-session state entered through `openSession()`.
 
 ### 3. `snapshot`
 
@@ -70,31 +82,18 @@ Properties:
 - The previous concrete sandbox instance must be considered closed.
 - Resume creates a new concrete runtime from the snapshot.
 
-### 4. `missing`
-
-Sandkit expected provider state, but the provider no longer has it.
-
-Examples:
-
-- stored `sandboxId` no longer exists
-- stored `snapshotId` no longer exists
-
-Properties:
-
-- Sandkit must surface a concrete error or fall back according to policy.
-- This is a recovery state, not a steady-state target.
-
 ## Transitions
 
 ```mermaid
 stateDiagram-v2
-    [*] --> uninitialized
-    uninitialized --> session: first runCommand creates sandbox
-    session --> session: runCommand persists session metadata
-    session --> snapshot: explicit snapshot/hibernate
-    snapshot --> session: resume from snapshot and execute
-    session --> missing: provider session lost
-    snapshot --> missing: provider snapshot lost
+    [*] --> cold
+    cold --> snapshot: first runCommand creates sandbox and commits
+    cold --> session: openSession()
+    snapshot --> snapshot: resume from snapshot and runCommand()
+    snapshot --> session: resume from snapshot and openSession()
+    session --> snapshot: session.commit()
+    session --> session: attachSession() / extendTimeout()
+    session --> cold: provider session lost or lease expired
 ```
 
 ## Unit Of Work
@@ -171,6 +170,43 @@ These must remain true across implementations.
 - Provider stop/snapshot semantics must not be ignored or silently contradicted.
 - A persisted workspace record must always describe one restore strategy clearly:
   either session-oriented restore or snapshot-oriented restore.
+
+## Capability Map
+
+```mermaid
+flowchart TD
+    A[workspace] --> B[durable policy]
+    A --> C[persisted sandbox state]
+    A --> D[run records]
+    A --> E[workspace.sandbox]
+    E --> F[runCommand]
+    E --> G[openSession]
+    E --> H[attachSession]
+    E --> I[getActiveLease]
+    G --> J[session]
+    H --> J
+    J --> K[exec]
+    J --> L[startProcess]
+    J --> M[url]
+    J --> N[extendTimeout]
+    J --> O[commit]
+```
+
+## What Sandkit Can Do Now
+
+| Area | API | Can be done | Notes |
+|---|---|---|---|
+| Durable command execution | `workspace.sandbox.runCommand(...)` | Yes | one-command durable unit, state persisted automatically; unavailable while an active session lease exists |
+| One-shot policy override | `runCommand({ policy })` | Yes | per-run override only |
+| Durable policy updates | `workspace.setPolicy(...)` | Yes | persisted on workspace record |
+| Live session start | `workspace.sandbox.openSession()` | Yes | requires no active attachable session; session is an exclusive live path |
+| Live session attach | `workspace.sandbox.attachSession()` | Yes | reattaches to an existing attachable lease only; does not refresh lease timing by itself |
+| Lease introspection | `workspace.sandbox.getActiveLease()` | Yes | includes sandbox id and expiry, null when detached |
+| Session command execution | `session.exec(...)` | Yes | live path, separate from `runCommand` |
+| Background process | `session.startProcess(...)` | Yes | interactive workloads |
+| Route discovery | `session.url(port)` | Yes | provider-backed public route lookup; port readiness and public route availability are not always the same |
+| Session timeout | `session.extendTimeout(durationMs)` | Yes | lease-extension path for live sessions |
+| Session commit | `session.commit()` | Yes | transitions to durable snapshot state |
 
 ## Non-Goals
 

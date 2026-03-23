@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
-import { createVercelSandboxDriverFactory, sandkit } from "sandkit";
+import { sandkit } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 
 import { openclawSessions, sandkitPolicies, sandkitRuns, sandkitWorkspaces } from "../db/schema";
 import { createOpenClawStore, type OpenClawStore } from "./openclaw-store";
