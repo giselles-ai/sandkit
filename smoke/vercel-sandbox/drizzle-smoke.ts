@@ -3,10 +3,10 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { sandkit } from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { sandkit } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { MockSandboxDriverFactory } from "sandkit/integrations/mock";
 // Internal-seam smoke: generate command is intentionally imported from package internals.
 
 import { runGenerateCommand } from "./internal-seams.ts";

@@ -9,6 +9,8 @@ It keeps two paths explicit:
 - `workspace.sandbox.runCommand(...)` for durable, one-command-at-a-time work
 - `openSession()` / `attachSession()` for a live leased sandbox when you need an interactive process
 
+An active session is an exclusive workspace lease. While a live session is open, `runCommand()` is unavailable until you attach to that session or commit it.
+
 Provider-specific behavior still matters, but the public API stays centered on workspaces, policies, and durable state.
 
 ## Problem
@@ -45,41 +47,54 @@ Sandkit is especially useful when an agent or long-running sandbox app needs to 
 ## Install
 
 ```sh
-npm install sandkit
+npm install @giselles-ai/sandkit
 ```
 
 With Drizzle:
 
 ```sh
-npm install sandkit drizzle-orm
+npm install @giselles-ai/sandkit drizzle-orm
 ```
 
 ## Quick Start
 
 ```ts
-import { sandkit, allowServices, codex, gemini, aiGateway } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
-import { db } from "@/db";
+import { Database } from "bun:sqlite";
 
-const appSandkit = sandkit({
-  database: drizzleAdapter(db, {
-    provider: "sqlite",
-  }),
+import { sandkit } from "@giselles-ai/sandkit";
+import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+
+const database = new Database("./sandkit.sqlite");
+const workspaceAdapter = createBunSqliteAdapter(database);
+
+const app = sandkit({
+  database: workspaceAdapter,
   sandbox: {
-    driverFactory: createVercelSandboxDriverFactory(),
+    driverFactory: createVercelSandboxDriverFactory({
+      timeout: 60_000,
+    }),
   },
 });
 
-const workspace = await appSandkit.createWorkspace({
-  policy: allowServices([codex(), gemini()]),
+const workspace = await app.createWorkspace({
+  name: "hello-sandkit",
 });
 
 await workspace.sandbox.runCommand({
   command: "sh",
   args: ["-lc", "echo 'hello world' > ./hello.txt"],
 });
+
+const result = await workspace.sandbox.runCommand({
+  command: "cat",
+  args: ["./hello.txt"],
+});
+
+console.log(result.stdout.trim());
 ```
+
+Set `VERCEL_OIDC_TOKEN` for local runs or `VERCEL_ACCESS_TOKEN` in CI before creating a Vercel-backed sandbox.
 
 ## Setup bootstrap
 
@@ -90,9 +105,11 @@ If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and pers
 By default setup runs under the workspace policy; set `setup.policy` when bootstrap needs broader access than steady-state execution.
 Because setup becomes shared durable state, `setup.policy` must also be durable: explicit secret-bearing policies are rejected there.
 
+`setup` durability is adapter-backed. With a persistent adapter such as Bun SQLite or Drizzle, the shared bootstrap survives process restarts. With the default in-memory adapter, it does not.
+
 ```ts
-import { sandkit, allowAll, allowServices, codex, gemini } from "sandkit";
-import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
+import { sandkit, allowAll } from "@giselles-ai/sandkit";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
 
 const app = sandkit({
   sandbox: {
@@ -106,10 +123,13 @@ const app = sandkit({
 });
 
 const workspace = await app.createWorkspace({
-  // createWorkspace options remain workspace-specific
-  policy: allowServices([codex(), gemini()]),
+  name: "bootstrapped-workspace",
 });
 ```
+
+## Local Defaults
+
+If you do not pass `database` or `sandbox.driverFactory`, Sandkit falls back to an in-memory adapter plus a mock sandbox driver. That default is useful for local tests and internal development, but the primary published usage is an explicit Vercel driver configuration.
 
 ## Policies
 
@@ -124,13 +144,13 @@ Durable default policy belongs to the workspace: use `createWorkspace({ policy: 
 ## Schema Generation
 
 ```sh
-npx sandkit generate --adapter drizzle --provider sqlite
+npx @giselles-ai/sandkit generate --adapter drizzle --provider sqlite
 ```
 
 If the project already has a Drizzle setup, provider discovery can infer the dialect:
 
 ```sh
-npx sandkit generate
+npx @giselles-ai/sandkit generate
 ```
 
 ## Examples

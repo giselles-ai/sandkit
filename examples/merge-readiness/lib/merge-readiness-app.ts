@@ -3,14 +3,14 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { allowAll, allowServices, codex, github } from "@giselles-ai/sandkit";
+import { type WorkspacePolicy } from "@giselles-ai/sandkit";
+import { sandkit, type PublicWorkspaceHandle } from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient, type Client } from "@libsql/client";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
-import { allowAll, allowServices, codex, github } from "sandkit";
-import { type WorkspacePolicy } from "sandkit";
-import { sandkit, type PublicWorkspaceHandle } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 
 import {
   sandkitPolicies,

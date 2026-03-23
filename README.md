@@ -9,6 +9,8 @@ It keeps two paths explicit:
 - `workspace.sandbox.runCommand(...)` for durable, one-command-at-a-time work
 - `openSession()` / `attachSession()` for a live leased sandbox when you need an interactive process
 
+An active session is an exclusive workspace lease. While a live session is open, `runCommand()` is unavailable until you attach to that session or commit it.
+
 Provider-specific behavior still matters, but the public API stays centered on workspaces, policies, and durable state.
 
 ## Problem
@@ -45,34 +47,38 @@ Sandkit is especially useful when an agent or long-running sandbox app needs to 
 ## Install
 
 ```sh
-npm install sandkit
+npm install @giselles-ai/sandkit
 ```
 
 With Drizzle:
 
 ```sh
-npm install sandkit drizzle-orm
+npm install @giselles-ai/sandkit drizzle-orm
 ```
 
 ## Quick Start
 
 ```ts
-import { sandkit, allowServices, codex, gemini } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
-import { db } from "@/db";
+import { Database } from "bun:sqlite";
 
-const appSandkit = sandkit({
-  database: drizzleAdapter(db, {
-    provider: "sqlite",
-  }),
+import { sandkit } from "@giselles-ai/sandkit";
+import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+
+const database = new Database("./sandkit.sqlite");
+const workspaceAdapter = createBunSqliteAdapter(database);
+
+const app = sandkit({
+  database: workspaceAdapter,
   sandbox: {
-    driverFactory: createVercelSandboxDriverFactory(),
+    driverFactory: createVercelSandboxDriverFactory({
+      timeout: 60_000,
+    }),
   },
 });
 
-const workspace = await appSandkit.createWorkspace({
-  policy: allowServices([codex(), gemini()]),
+const workspace = await app.createWorkspace({
+  name: "hello-sandkit",
 });
 
 await workspace.sandbox.runCommand({
@@ -85,8 +91,10 @@ const result = await workspace.sandbox.runCommand({
   args: ["./hello.txt"],
 });
 
-console.log(result.stdout);
+console.log(result.stdout.trim());
 ```
+
+Set `VERCEL_OIDC_TOKEN` for local runs or `VERCEL_ACCESS_TOKEN` in CI before creating a Vercel-backed sandbox.
 
 ## Policies
 
@@ -109,11 +117,29 @@ await workspace.sandbox.runCommand({
 Durable default policy belongs to the workspace. Set it when creating the workspace or update it later:
 
 ```ts
-const workspace = await appSandkit.createWorkspace({
+const workspace = await app.createWorkspace({
   policy: allowServices([codex()]),
 });
 
 await workspace.setPolicy(allowServices([codex()]));
+```
+
+## Setup Bootstrap
+
+Pass setup to `sandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
+Each workspace starts from that shared bootstrap snapshot when no workspace-specific durable state exists.
+Sandkit persists one shared bootstrap state per adapter and bootstrap definition (command + args), runs setup once per unique bootstrap definition, and reuses the matching state for subsequent workspaces.
+If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and persists a replacement.
+
+`setup` durability is adapter-backed. With a persistent adapter such as Bun SQLite or Drizzle, the shared bootstrap survives process restarts. With the default in-memory adapter, it does not.
+
+```ts
+const app = sandkit({
+  setup: {
+    command: "sh",
+    args: ["-lc", "npm ci"],
+  },
+});
 ```
 
 ## Live Sessions
@@ -134,15 +160,19 @@ await session.commit();
 
 `runCommand()` and a live session are intentionally separate. If a session is active, attach to it or commit it before running another durable command.
 
+## Local Defaults
+
+If you do not pass `database` or `sandbox.driverFactory`, Sandkit falls back to an in-memory adapter plus a mock sandbox driver. That default is useful for local tests and internal development, but the primary published usage is an explicit Vercel driver configuration.
+
 ## Drizzle Adapter
 
 The generated schema exports the canonical workspace table as `sandkitWorkspaces`.
 
 ```ts
-import { sandkit, allowServices, codex } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { sandkit, allowServices, codex } from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
 import { db, schema } from "@/db";
-import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 
 const appSandkit = sandkit({
   database: drizzleAdapter(db, {
@@ -158,14 +188,14 @@ const appSandkit = sandkit({
 Generate schema:
 
 ```sh
-npx sandkit generate --adapter drizzle --provider sqlite
+npx @giselles-ai/sandkit generate --adapter drizzle --provider sqlite
 npx drizzle-kit generate
 ```
 
 If you already have a Drizzle repo, provider discovery can infer the dialect:
 
 ```sh
-npx sandkit generate
+npx @giselles-ai/sandkit generate
 ```
 
 ## Examples

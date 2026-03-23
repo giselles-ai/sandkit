@@ -13,8 +13,8 @@
     "smoke:policy-credentials": "bun run policy-credentials-smoke.ts"
   },
   "dependencies": {
-    "drizzle-orm": "^0.44.2",
-    "sandkit": "workspace:*"
+    "@giselles-ai/sandkit": "workspace:*",
+    "drizzle-orm": "^0.44.2"
   },
   "devDependencies": {
     "@types/bun": "1.3.11"

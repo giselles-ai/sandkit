@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { sandkit, allowService, codex, gemini, github } from "sandkit";
-import { createMemoryAdapter } from "sandkit/adapters/memory";
-import { createBunSqliteAdapter } from "sandkit/adapters/sqlite-bun";
-import { MockSandboxDriverFactory } from "sandkit/integrations/mock";
+import { sandkit, allowService, codex, gemini, github } from "@giselles-ai/sandkit";
+import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
+import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
+import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
 // Internal-seam smoke: policy compile is intentionally validated via package internals.
 
 import { compileVercelNetworkPolicy } from "./internal-seams.ts";

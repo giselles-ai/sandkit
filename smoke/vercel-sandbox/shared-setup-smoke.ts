@@ -1,9 +1,7 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { drizzle } from "drizzle-orm/bun-sqlite";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { sandkit } from "sandkit";
+import { sandkit } from "@giselles-ai/sandkit";
 import type {
   CommandResult,
   PersistedSandboxState,
@@ -11,8 +9,10 @@ import type {
   SandboxDriverFactory,
   WorkspacePolicy,
   WorkspaceRecord,
-} from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
+} from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 const SQLITE_PATH = process.env.SMOKE_SHARED_SETUP_DB_PATH ?? "./smoke-shared-setup.sqlite";
 

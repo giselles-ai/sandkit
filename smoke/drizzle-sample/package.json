@@ -10,10 +10,10 @@
     "app": "bun run app.ts"
   },
   "dependencies": {
+    "@giselles-ai/sandkit": "workspace:*",
     "better-sqlite3": "^11.3.0",
     "drizzle-kit": "0.31.10",
-    "drizzle-orm": "^0.44.2",
-    "sandkit": "workspace:*"
+    "drizzle-orm": "^0.44.2"
   },
   "devDependencies": {
     "@types/bun": "latest"

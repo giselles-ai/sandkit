@@ -1,6 +1,6 @@
-import { sandkit } from "sandkit";
-import { createMemoryAdapter } from "sandkit/adapters/memory";
-import { MockSandboxDriverFactory } from "sandkit/integrations/mock";
+import { sandkit } from "@giselles-ai/sandkit";
+import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
+import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {

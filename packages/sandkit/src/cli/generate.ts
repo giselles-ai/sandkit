@@ -13,8 +13,8 @@ import type {
 function usage() {
   return [
     "Usage: sandkit generate [--adapter drizzle] [--dialect <sqlite|postgresql|pg>] [--out <file>] [--stdout]",
-    "Example: npx sandkit generate --dialect sqlite --stdout",
-    "Example: npx sandkit generate --adapter drizzle --dialect postgresql --stdout",
+    "Example: npx @giselles-ai/sandkit generate --dialect sqlite --stdout",
+    "Example: npx @giselles-ai/sandkit generate --adapter drizzle --dialect postgresql --stdout",
     "If --stdout is omitted, output is shown to console by default.",
     "Default output file: db/schema/sandkit.ts",
   ].join("\n");

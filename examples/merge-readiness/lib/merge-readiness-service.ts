@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import type { PublicWorkspaceHandle, WorkspaceSessionHandle } from "sandkit";
+import type { PublicWorkspaceHandle, WorkspaceSessionHandle } from "@giselles-ai/sandkit";
 
 import {
   getMergeReadinessRuntime,

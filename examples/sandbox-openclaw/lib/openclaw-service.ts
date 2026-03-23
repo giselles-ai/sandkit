@@ -1,4 +1,4 @@
-import type { PublicWorkspaceHandle } from "sandkit";
+import type { PublicWorkspaceHandle } from "@giselles-ai/sandkit";
 
 import { getOpenClawRuntime, type OpenClawRuntime } from "./openclaw-app";
 import {
