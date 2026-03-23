@@ -395,11 +395,10 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
             networkPolicy: compileVercelNetworkPolicy(options.policy),
           });
 
-    const driver = new VercelSandboxDriver(sandbox);
-    if (snapshotId === undefined || typeof snapshotId !== "string") {
-      await driver.applyPolicy(options.policy);
-    }
-    return driver;
+    // Reattaching to an existing live sandbox should not mutate provider state.
+    // Updating the network policy here races with commit/snapshot shutdown and can
+    // fail on otherwise read-only flows like getActiveLease().
+    return new VercelSandboxDriver(sandbox);
   }
 }
 
