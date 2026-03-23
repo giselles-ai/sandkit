@@ -1,12 +1,8 @@
-import {
-  createMemoryAdapter,
-  sandkit,
-  allowAll,
-  allowService,
-  codex,
-  denyAll,
-  evaluateWorkspacePolicy,
-} from "sandkit";
+import { sandkit, allowAll, allowService, codex, denyAll } from "sandkit";
+// Internal-seam coverage for evaluator behavior (policy DSL contract test)
+import { createMemoryAdapter } from "sandkit/adapters/memory";
+
+import { evaluateWorkspacePolicy } from "./internal-seams.ts";
 
 async function runSmoke(): Promise<void> {
   const app = sandkit({

@@ -10,10 +10,6 @@ export class Sandkit {
     this.#ctx = createSandkitContext(options);
   }
 
-  get context(): SandkitContext {
-    return this.#ctx;
-  }
-
   async createWorkspace(input: WorkspaceCreateInput = {}): Promise<PublicWorkspaceHandle> {
     const policy = input.policy ?? this.#ctx.defaultPolicy;
     const workspace = await this.#ctx.adapter.workspaces.createWorkspace({

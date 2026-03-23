@@ -35,9 +35,19 @@ import {
 
 export interface PublicWorkspaceHandle {
   readonly id: string;
-  readonly record: WorkspaceRecord;
+  readonly descriptor: WorkspaceDescriptor;
   readonly sandbox: WorkspaceSandboxHandle;
   setPolicy(policy: WorkspacePolicy): Promise<void>;
+}
+
+export type WorkspaceStatus = "active" | "inactive" | "archived";
+
+export interface WorkspaceDescriptor {
+  readonly id: string;
+  readonly name?: string;
+  readonly status: WorkspaceStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 interface RunFinishInput extends AdapterRunFinishInput {
@@ -48,11 +58,13 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   readonly #ctx: SandkitContext;
   #record: WorkspaceRecord;
   #sandboxState: WorkspaceSandboxState;
+  #descriptor: WorkspaceDescriptor;
   #lazySandbox?: LazySandboxHandle;
 
   constructor(ctx: SandkitContext, record: WorkspaceRecord) {
     this.#ctx = ctx;
     this.#record = record;
+    this.#descriptor = this.resolveDescriptor(record);
     this.#sandboxState = readWorkspaceSandboxState(record);
   }
 
@@ -60,8 +72,8 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     return this.#record.id;
   }
 
-  get record(): WorkspaceRecord {
-    return this.#record;
+  get descriptor(): WorkspaceDescriptor {
+    return this.#descriptor;
   }
 
   get sandbox(): LazySandboxHandle {
@@ -83,7 +95,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       this.#record.id,
       asWorkspacePolicyPatch(policy),
     );
-    this.#record = result;
+    this.updateFromRecord(result);
     this.#sandboxState = readWorkspaceSandboxState(result);
   }
 
@@ -241,7 +253,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       this.#record.id,
       transition,
     );
-    this.#record = result.record;
+    this.updateFromRecord(result.record);
     this.#sandboxState = result.state;
   }
 
@@ -251,7 +263,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       throw new Error(`Workspace with id "${this.#record.id}" no longer exists`);
     }
 
-    this.#record = latest;
+    this.updateFromRecord(latest);
     this.#sandboxState = readWorkspaceSandboxState(latest);
     if (isWorkspaceSessionStateExpired(this.#sandboxState)) {
       const result = await persistSandboxTransition(
@@ -259,11 +271,26 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
         this.#record.id,
         transitionToCold(),
       );
-      this.#record = result.record;
+      this.updateFromRecord(result.record);
       this.#sandboxState = result.state;
     }
 
     return this.#record;
+  }
+
+  private resolveDescriptor(record: WorkspaceRecord): WorkspaceDescriptor {
+    return {
+      id: record.id,
+      name: record.name,
+      status: record.status,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+  }
+
+  private updateFromRecord(record: WorkspaceRecord): void {
+    this.#record = record;
+    this.#descriptor = this.resolveDescriptor(record);
   }
 
   private async createPolicySnapshot(policy: WorkspacePolicy) {

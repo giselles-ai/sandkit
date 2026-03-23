@@ -43,6 +43,11 @@
       "import": "./dist/adapters/drizzle.js",
       "default": "./dist/adapters/drizzle.js"
     },
+    "./adapters/memory": {
+      "types": "./dist/adapters/memory.d.ts",
+      "import": "./dist/adapters/memory.js",
+      "default": "./dist/adapters/memory.js"
+    },
     "./adapters/sqlite-bun": {
       "types": "./dist/adapters/sqlite-bun.d.ts",
       "import": "./dist/adapters/sqlite-bun.js",
@@ -62,6 +67,11 @@
       "types": "./dist/schema/index.d.ts",
       "import": "./dist/schema/index.js",
       "default": "./dist/schema/index.js"
+    },
+    "./integrations/vercel": {
+      "types": "./dist/integrations/vercel.d.ts",
+      "import": "./dist/integrations/vercel.js",
+      "default": "./dist/integrations/vercel.js"
     },
     "./cli": {
       "types": "./dist/cli/index.d.ts",

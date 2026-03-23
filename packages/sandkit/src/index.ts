@@ -1,10 +1,16 @@
-export * from "./core/sandkit.ts";
-export * from "./core/sandbox.ts";
-export * from "./core/workspace.ts";
-export * from "./core/mock-driver.ts";
-export * from "./types.ts";
-export * from "./adapters/index.ts";
-export * from "./drivers/index.ts";
-export * from "./policies/index.ts";
-export * from "./schema/index.ts";
-export * from "./cli/index.ts";
+export { Sandkit, sandkit } from "./core/sandkit.ts";
+export type {
+  PublicWorkspaceHandle,
+  WorkspaceDescriptor,
+  WorkspaceStatus,
+} from "./core/workspace.ts";
+export type { WorkspaceSandboxHandle, WorkspaceSessionHandle } from "./core/sandbox.ts";
+export { allowAll, denyAll, allowService, allowServices } from "./policies/dsl.ts";
+export type {
+  WorkspacePolicy,
+  PolicyServiceDescriptor,
+  PolicyServiceCredentialSource,
+} from "./policies/types.ts";
+export { codex } from "./policies/codex.ts";
+export { gemini } from "./policies/gemini.ts";
+export { github } from "./policies/github.ts";
