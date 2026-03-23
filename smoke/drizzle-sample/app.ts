@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 
 import { sandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
-import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
+import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 
 const SQLITE_PATH = process.env.SMOKE_DRIZZLE_SAMPLE_DB_PATH ?? "./smoke-drizzle-workspaces.sqlite";
@@ -23,9 +23,7 @@ async function run(): Promise<void> {
     database: drizzleAdapter(drizzleDb, {
       provider: "sqlite",
     }),
-    sandbox: {
-      driverFactory: new MockSandboxDriverFactory(),
-    },
+    sandbox: mockSandbox(),
   });
 
   const created = await app.createWorkspace({

@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { sandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
-import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
+import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 // Internal-seam smoke: generate command is intentionally imported from package internals.
 
@@ -97,9 +97,7 @@ async function runSmoke(): Promise<void> {
       database: drizzleAdapter(db, {
         provider: "sqlite",
       }),
-      sandbox: {
-        driverFactory: new MockSandboxDriverFactory(),
-      },
+      sandbox: mockSandbox(),
     });
 
     const workspace = await app.createWorkspace({ name: expectedName });
@@ -118,9 +116,7 @@ async function runSmoke(): Promise<void> {
       database: drizzleAdapter(replayDb, {
         provider: "sqlite",
       }),
-      sandbox: {
-        driverFactory: new MockSandboxDriverFactory(),
-      },
+      sandbox: mockSandbox(),
     });
 
     const reloaded = await replayApp.getWorkspace(workspace.id);

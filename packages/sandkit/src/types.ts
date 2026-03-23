@@ -153,11 +153,51 @@ export interface SandboxDriverFactory {
   isSessionUnavailableError?(error: unknown): boolean;
 }
 
+export interface VercelSandboxOptions {
+  runtime?: string;
+  timeout?: number;
+  ports?: number[];
+}
+
+const sandboxProviderContract = Symbol("sandkit.sandbox.provider");
+
+type SandboxProviderRecord = {
+  readonly provider: string;
+  readonly driverFactory: SandboxDriverFactory;
+};
+
+export interface SandkitSandboxProvider {
+  readonly [sandboxProviderContract]: SandboxProviderRecord;
+}
+
+export function createSandboxProvider(
+  provider: string,
+  driverFactory: SandboxDriverFactory,
+): SandkitSandboxProvider {
+  return {
+    [sandboxProviderContract]: {
+      provider,
+      driverFactory,
+    },
+  };
+}
+
+export function getSandboxDriverFactory(
+  sandboxProvider: SandkitSandboxProvider,
+): SandboxDriverFactory {
+  const driverFactory = sandboxProvider[sandboxProviderContract]?.driverFactory;
+  if (!driverFactory) {
+    throw new Error(
+      "SandkitOptions.sandbox is invalid. Pass a provider created by Sandkit integrations such as vercelSandbox(...).",
+    );
+  }
+
+  return driverFactory;
+}
+
 export interface SandkitOptions {
   readonly database?: SandkitAdapter | undefined;
   readonly setup?: SharedSetup | undefined;
   readonly network?: readonly unknown[] | undefined;
-  readonly sandbox: {
-    readonly driverFactory: SandboxDriverFactory;
-  };
+  readonly sandbox: SandkitSandboxProvider;
 }

@@ -1,9 +1,10 @@
 import { createMemoryAdapter } from "../adapters/index.ts";
-import type { SandkitOptions } from "../types.ts";
+import { getSandboxDriverFactory } from "../types.ts";
+import type { SandkitOptions, SandboxDriverFactory } from "../types.ts";
 
 export interface SandkitContext {
   readonly adapter: NonNullable<SandkitOptions["database"]>;
-  readonly driverFactory: NonNullable<NonNullable<SandkitOptions["sandbox"]>["driverFactory"]>;
+  readonly driverFactory: SandboxDriverFactory;
   readonly options: SandkitOptions;
 }
 
@@ -17,21 +18,19 @@ function resolveDeprecatedNetworkOption(options: SandkitOptions): void {
 
 export function createSandkitContext(options: SandkitOptions): SandkitContext {
   if (!options) {
-    throw new Error(
-      "SandkitOptions is required. Set sandbox.driverFactory to a Sandkit sandbox driver factory.",
-    );
+    throw new Error("SandkitOptions is required. Set sandbox to a Sandkit sandbox provider.");
   }
 
   resolveDeprecatedNetworkOption(options);
-  if (!options.sandbox?.driverFactory) {
+  if (!options.sandbox) {
     throw new Error(
-      "SandkitOptions.sandbox.driverFactory is required. Set it to a Sandkit sandbox driver factory.",
+      "SandkitOptions.sandbox is required. Set it to a Sandkit sandbox provider (for example, vercelSandbox(...)).",
     );
   }
 
   return {
     adapter: options.database ?? createMemoryAdapter(),
-    driverFactory: options.sandbox.driverFactory,
+    driverFactory: getSandboxDriverFactory(options.sandbox),
     options,
   };
 }

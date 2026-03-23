@@ -63,18 +63,16 @@ import { Database } from "bun:sqlite";
 
 import { sandkit } from "@giselles-ai/sandkit";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
-import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 
 const database = new Database("./sandkit.sqlite");
 const workspaceAdapter = createBunSqliteAdapter(database);
 
 const app = sandkit({
   database: workspaceAdapter,
-  sandbox: {
-    driverFactory: createVercelSandboxDriverFactory({
-      timeout: 60_000,
-    }),
-  },
+  sandbox: vercelSandbox({
+    timeout: 60_000,
+  }),
 });
 
 const workspace = await app.createWorkspace({
@@ -160,9 +158,10 @@ await session.commit();
 
 `runCommand()` and a live session are intentionally separate. If a session is active, attach to it or commit it before running another durable command.
 
-## Local Defaults
+## Configuration
 
-If you do not pass `database` or `sandbox.driverFactory`, Sandkit falls back to an in-memory adapter plus a mock sandbox driver. That default is useful for local tests and internal development, but the primary published usage is an explicit Vercel driver configuration.
+Provide a `sandbox` provider explicitly (for example `vercelSandbox(...)`).
+If you omit `database`, Sandkit defaults to the in-memory adapter.
 
 ## Drizzle Adapter
 
@@ -171,7 +170,7 @@ The generated schema exports the canonical workspace table as `sandkitWorkspaces
 ```ts
 import { sandkit, allowServices, codex } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
-import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { db, schema } from "@/db";
 
 const appSandkit = sandkit({
@@ -179,9 +178,7 @@ const appSandkit = sandkit({
     provider: "sqlite",
     workspaces: schema.sandkitWorkspaces,
   }),
-  sandbox: {
-    driverFactory: createVercelSandboxDriverFactory(),
-  },
+  sandbox: vercelSandbox(),
 });
 ```
 

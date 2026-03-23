@@ -7,7 +7,7 @@ import { allowAll, allowServices, codex, github } from "@giselles-ai/sandkit";
 import { type WorkspacePolicy } from "@giselles-ai/sandkit";
 import { sandkit, type PublicWorkspaceHandle } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
-import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient, type Client } from "@libsql/client";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
@@ -156,13 +156,11 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
       ],
       policy: allowAll(),
     },
-    sandbox: {
-      driverFactory: createVercelSandboxDriverFactory({
-        runtime: "node24",
-        timeout: parsePositiveMs(SANDBOX_TIMEOUT_MS),
-        ports: [3001],
-      }),
-    },
+    sandbox: vercelSandbox({
+      runtime: "node24",
+      timeout: parsePositiveMs(SANDBOX_TIMEOUT_MS),
+      ports: [3001],
+    }),
   });
 
   return {

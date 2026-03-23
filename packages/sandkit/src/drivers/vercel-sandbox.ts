@@ -12,6 +12,7 @@ import type {
   SandboxCreateOptions,
   SandboxDriverFactory,
   WorkspaceRecord,
+  VercelSandboxOptions,
 } from "../types.ts";
 import { compileVercelNetworkPolicy } from "./vercel-network-policy.ts";
 
@@ -29,12 +30,6 @@ interface VercelCommandHandle {
 
 interface VercelPersistedState {
   snapshotId?: string;
-}
-
-export interface VercelSandboxDriverFactoryOptions {
-  runtime?: string;
-  timeout?: number;
-  ports?: number[];
 }
 
 class VercelSandboxDriver implements SandboxDriver {
@@ -335,7 +330,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
   readonly #timeout: number;
   readonly #ports?: number[];
 
-  constructor(options: VercelSandboxDriverFactoryOptions = {}) {
+  constructor(options: VercelSandboxOptions = {}) {
     this.#runtime = options.runtime ?? "node24";
     this.#timeout = options.timeout ?? 60_000;
     this.#ports = options.ports;
@@ -403,7 +398,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
 }
 
 export function createVercelSandboxDriverFactory(
-  options: VercelSandboxDriverFactoryOptions = {},
+  options: VercelSandboxOptions = {},
 ): SandboxDriverFactory {
   return new VercelSandboxDriverFactory(options);
 }

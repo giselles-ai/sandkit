@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { allowAll, sandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
-import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
+import { internalSandboxProvider, mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
@@ -234,9 +234,7 @@ async function runWorkspaceMetadataCorruptionScenario(): Promise<void> {
       database: drizzleAdapter(db, {
         provider: "sqlite",
       }),
-      sandbox: {
-        driverFactory: new MockSandboxDriverFactory(),
-      },
+      sandbox: mockSandbox(),
     });
 
     await expectErrorContaining(
@@ -266,9 +264,7 @@ async function runRunArgsCorruptionScenario(corruptedArgs: string, label: string
     });
     const app = sandkit({
       database: adapter,
-      sandbox: {
-        driverFactory: new MockSandboxDriverFactory(),
-      },
+      sandbox: mockSandbox(),
     });
     const workspace = await app.createWorkspace({ name: label });
 
@@ -298,9 +294,7 @@ async function runProviderCommitCorruptionScenario(): Promise<void> {
     });
     const app = sandkit({
       database: adapter,
-      sandbox: {
-        driverFactory: new MockSandboxDriverFactory(),
-      },
+      sandbox: mockSandbox(),
     });
     const workspace = await app.createWorkspace({ name: "provider-commit-corruption" });
 
@@ -318,9 +312,7 @@ async function runProviderCommitCorruptionScenario(): Promise<void> {
 async function runAggregateFailureScenario(): Promise<void> {
   const app = sandkit({
     database: createMemoryAdapter(),
-    sandbox: {
-      driverFactory: createFailingDriverFactory(),
-    },
+    sandbox: internalSandboxProvider(createFailingDriverFactory(), "aggregate-failure"),
   });
   const workspace = await app.createWorkspace({ name: "aggregate-failure", policy: allowAll() });
 

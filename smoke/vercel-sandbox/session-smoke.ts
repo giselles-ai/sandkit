@@ -1,6 +1,6 @@
 import { sandkit } from "@giselles-ai/sandkit";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
-import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
+import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {
@@ -162,9 +162,7 @@ async function runStateRecoverySmoke(
 ): Promise<void> {
   const app = sandkit({
     database: adapter,
-    sandbox: {
-      driverFactory: new MockSandboxDriverFactory(),
-    },
+    sandbox: mockSandbox(),
   });
 
   const workspaceWithNonAttachable = await app.createWorkspace({
@@ -224,9 +222,7 @@ async function runSmoke(): Promise<void> {
   const adapter = createMemoryAdapter();
   const app = sandkit({
     database: adapter,
-    sandbox: {
-      driverFactory: new MockSandboxDriverFactory(),
-    },
+    sandbox: mockSandbox(),
   });
 
   await runPublicSessionSmoke(app);
