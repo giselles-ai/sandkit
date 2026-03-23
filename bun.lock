@@ -10,6 +10,26 @@
         "oxlint": "1.56.0",
       },
     },
+    "examples/merge-readiness": {
+      "name": "merge-readiness",
+      "version": "0.0.1",
+      "dependencies": {
+        "@libsql/client": "^0.15.15",
+        "drizzle-orm": "0.45.1",
+        "next": "16.1.7",
+        "react": "19.2.0",
+        "react-dom": "19.2.0",
+        "sandkit": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/node": "^24.0.0",
+        "@types/react": "^19.2.2",
+        "@types/react-dom": "^19.2.2",
+        "drizzle-kit": "0.31.10",
+        "typescript": "5.8.3",
+      },
+    },
     "examples/sandbox-openclaw": {
       "name": "sandbox-openclaw",
       "version": "0.0.1",
@@ -1107,6 +1127,8 @@
     "meow": ["meow@14.1.0", "", {}, "sha512-EDYo6VlmtnumlcBCbh1gLJ//9jvM/ndXHfVXIFrZVr6fGcwTUyCTFNTLCKuY3ffbK8L/+3Mzqnd58RojiZqHVw=="],
 
     "merge-descriptors": ["merge-descriptors@1.0.3", "", {}, "sha512-gaNvAS7TZ897/rVaZ0nMtAyxNyi/pdbjbAwUpFQpN70GqnVfOiXpeUUMKRBmzXaSQ8DdTX4/0ms62r2K+hE6mQ=="],
+
+    "merge-readiness": ["merge-readiness@workspace:examples/merge-readiness"],
 
     "merge-stream": ["merge-stream@2.0.0", "", {}, "sha512-abv/qOcuPfk3URPfDzmZU1LKmuw8kT+0nIHvKrKgFrwifol/doWcdA4ZqsWQ8ENrFKkd67Mfpo/LovbIUsbt3w=="],
 
