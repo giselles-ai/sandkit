@@ -53,6 +53,11 @@
       "import": "./dist/adapters/sqlite-bun.js",
       "default": "./dist/adapters/sqlite-bun.js"
     },
+    "./policies/ai-gateway": {
+      "types": "./dist/policies/ai-gateway.d.ts",
+      "import": "./dist/policies/ai-gateway.js",
+      "default": "./dist/policies/ai-gateway.js"
+    },
     "./policies/codex": {
       "types": "./dist/policies/codex.d.ts",
       "import": "./dist/policies/codex.js",

@@ -1,4 +1,6 @@
 import type { WorkspaceRecord, WorkspaceUpdateInput } from "../adapters/types.ts";
+import { parseWorkspacePolicy, serializeWorkspacePolicy } from "../policies/dsl.ts";
+import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
   JsonValue,
   PersistedSandboxState,
@@ -13,11 +15,17 @@ type RawWorkspaceSandboxState = {
   sessionId?: unknown;
   state?: unknown;
   lease?: unknown;
+  policy?: unknown;
 };
 
 type SerializedWorkspaceSandboxState =
   | { kind: "cold" }
-  | { kind: "session"; sessionId: string; lease: SerializedSessionLease }
+  | {
+      kind: "session";
+      sessionId: string;
+      lease: SerializedSessionLease;
+      policy?: JsonValue;
+    }
   | { kind: "snapshot"; state: PersistedSandboxState };
 
 type SerializedSessionLease = {
@@ -37,6 +45,7 @@ interface WorkspaceSandboxStateSession extends WorkspaceSandboxStateBase {
   readonly kind: "session";
   readonly sandboxId: string;
   readonly lease: SandboxSessionLease;
+  readonly sessionPolicy?: WorkspacePolicy;
 }
 
 interface WorkspaceSandboxStateSnapshot extends WorkspaceSandboxStateBase {
@@ -119,6 +128,18 @@ function isSerializedSessionLease(value: unknown): value is SerializedSessionLea
   return isIsoTimestamp(value.observedAt) && isIsoTimestamp(value.expiresAt);
 }
 
+function readWorkspaceSessionPolicy(value: unknown): WorkspacePolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return parseWorkspacePolicy(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function toSnapshotCommit(snapshot: PersistedSandboxState): SandboxSnapshotCommit {
   return { kind: "snapshot", state: snapshot };
 }
@@ -135,6 +156,10 @@ function toSerializedWorkspaceState(state: WorkspaceSandboxState): SerializedWor
           observedAt: state.lease.observedAt,
           expiresAt: state.lease.expiresAt,
         },
+        policy:
+          state.sessionPolicy === undefined
+            ? undefined
+            : serializeWorkspacePolicy(state.sessionPolicy),
       };
     case "snapshot":
       return { kind: "snapshot", state: state.commit.state };
@@ -175,6 +200,7 @@ export function readWorkspaceSandboxState(workspace: WorkspaceRecord): Workspace
         observedAt: raw.lease.observedAt,
         expiresAt: raw.lease.expiresAt,
       },
+      sessionPolicy: readWorkspaceSessionPolicy(raw.policy),
     };
   }
 
@@ -258,11 +284,13 @@ export function transitionToCold(at = new Date().toISOString()): WorkspaceSandbo
 export function transitionToSession(
   sandboxId: string,
   lease: SandboxSessionLease,
+  sessionPolicy?: WorkspacePolicy,
 ): WorkspaceSandboxTransition {
   const nextState: WorkspaceSandboxState = {
     kind: "session",
     sandboxId,
     lease,
+    sessionPolicy,
   };
 
   return {

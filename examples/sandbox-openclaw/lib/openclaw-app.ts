@@ -39,7 +39,7 @@ export const SANDBOX_TIMEOUT_MS = Number.parseInt(
   process.env.SANDBOX_TIMEOUT_MS ?? `${DEFAULT_TIMEOUT_MS}`,
   10,
 );
-export const GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY ?? "";
+export const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY ?? "";
 
 const REQUIRED_SCHEMA_TABLES = [
   "sandkit_workspaces",
@@ -56,7 +56,6 @@ export type OpenClawRuntimeConfig = {
   openclawInstallSpec: string;
   aiGatewayApiUrl: string;
   aiGatewayModel: string;
-  gatewayApiKey: string;
   gatewayPort: number;
   sandboxTimeoutMs: number;
 };
@@ -111,7 +110,7 @@ export async function getOpenClawRuntime(): Promise<OpenClawRuntime> {
 }
 
 async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
-  if (!GATEWAY_API_KEY) {
+  if (!AI_GATEWAY_API_KEY) {
     throw new Error("AI_GATEWAY_API_KEY is required for this example.");
   }
 
@@ -154,7 +153,6 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
       openclawInstallSpec: OPENCLAW_INSTALL_SPEC,
       aiGatewayApiUrl: AI_GATEWAY_API_URL,
       aiGatewayModel: AI_GATEWAY_MODEL,
-      gatewayApiKey: GATEWAY_API_KEY,
       gatewayPort: OPENCLAW_GATEWAY_PORT,
       sandboxTimeoutMs: parsePositiveMs(SANDBOX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     },

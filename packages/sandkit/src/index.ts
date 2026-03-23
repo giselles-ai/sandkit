@@ -11,6 +11,7 @@ export type {
   PolicyServiceDescriptor,
   PolicyServiceCredentialSource,
 } from "./policies/types.ts";
+export { aiGateway } from "./policies/ai-gateway.ts";
 export { codex } from "./policies/codex.ts";
 export { gemini } from "./policies/gemini.ts";
 export { github } from "./policies/github.ts";
