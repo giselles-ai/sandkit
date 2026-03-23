@@ -15,9 +15,7 @@ import {
   TERMINAL_REVIEW_STATUSES,
   type MergeReadinessRecommendation,
   type MergeReadinessReviewRecord,
-  type MergeReadinessReviewStatus,
   type MergeReadinessSessionRecord,
-  type MergeReadinessSessionStatus,
   type MergeReadinessStore,
   type MergeReadinessVerdict,
   parseTextList,
@@ -192,7 +190,7 @@ function workspaceRepoPath(workspaceId: string): string {
   return join(workspaceRoot(workspaceId), "repo");
 }
 
-function workspaceArtifactDir(workspaceId: string, reviewId: string): string {
+function workspaceArtifactDir(workspaceId: string): string {
   return join(workspaceRepoPath(workspaceId), ".merge-readiness");
 }
 
@@ -383,7 +381,7 @@ function buildCodexScript(
   stderrPath: string;
   resultPath: string;
 } {
-  const artifactDir = workspaceArtifactDir(workspaceId, reviewId);
+  const artifactDir = workspaceArtifactDir(workspaceId);
   const promptPath = join(artifactDir, `${reviewId}.prompt`);
   const schemaPath = join(artifactDir, `${reviewId}.schema.json`);
   const stdoutPath = join(artifactDir, `${reviewId}.stdout.log`);
