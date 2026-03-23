@@ -100,8 +100,10 @@ Set `VERCEL_OIDC_TOKEN` for local runs or `VERCEL_ACCESS_TOKEN` in CI before cre
 
 Pass setup to `sandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
 Each workspace starts from that shared bootstrap snapshot when no workspace-specific durable state exists.
-Sandkit persists one shared bootstrap state per adapter and bootstrap definition (command + args), runs setup once per unique bootstrap definition, and reuses the matching state for subsequent workspaces.
+Sandkit persists one shared bootstrap state per adapter and bootstrap definition (command + args + explicit setup policy), runs setup once per unique bootstrap definition, and reuses the matching state for subsequent workspaces.
 If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and persists a replacement.
+By default setup runs under the workspace policy; set `setup.policy` when bootstrap needs broader access than steady-state execution.
+Because setup becomes shared durable state, `setup.policy` must also be durable: explicit secret-bearing policies are rejected there.
 
 `setup` durability is adapter-backed. With a persistent adapter such as Bun SQLite or Drizzle, the shared bootstrap survives process restarts. With the default in-memory adapter, it does not.
 
@@ -110,6 +112,7 @@ const app = sandkit({
   setup: {
     command: "sh",
     args: ["-lc", "npm ci"],
+    policy: allowAll(),
   },
 });
 

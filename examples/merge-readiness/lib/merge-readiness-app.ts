@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { allowServices, codex, github } from "@giselles-ai/sandkit";
+import { allowAll, allowServices, codex, github } from "@giselles-ai/sandkit";
 import { type WorkspacePolicy } from "@giselles-ai/sandkit";
 import { sandkit, type PublicWorkspaceHandle } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
@@ -15,6 +15,7 @@ import { drizzle } from "drizzle-orm/libsql";
 import {
   sandkitPolicies,
   sandkitRuns,
+  sandkitSetupStates,
   sandkitWorkspaces,
   mergeReadinessReviews,
   mergeReadinessSessions,
@@ -22,6 +23,9 @@ import {
 import { createMergeReadinessStore, type MergeReadinessStore } from "./merge-readiness-store";
 
 export const REVIEW_WORKSPACE_PREFIX = "merge-readiness";
+export const NPM_PREFIX = "/vercel/sandbox/npm-global";
+export const NODE_BIN_DIR = "/vercel/runtimes/node24/bin";
+export const CODEX_BIN_PATH = `${NPM_PREFIX}/bin/codex`;
 export const SANDBOX_TIMEOUT_MS = Number.parseInt(
   process.env.MR_SANDBOX_TIMEOUT_MS ?? `${20 * 60_000}`,
   10,
@@ -33,6 +37,7 @@ const REQUIRED_SCHEMA_TABLES = [
   "sandkit_workspaces",
   "sandkit_runs",
   "sandkit_policies",
+  "sandkit_setup_states",
   "merge_readiness_reviews",
   "merge_readiness_sessions",
   "__drizzle_migrations",
@@ -123,6 +128,7 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
       sandkitWorkspaces,
       sandkitRuns,
       sandkitPolicies,
+      sandkitSetupStates,
       mergeReadinessReviews,
       mergeReadinessSessions,
     },
@@ -134,6 +140,22 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
 
   const app = sandkit({
     database: adapter,
+    setup: {
+      command: "bash",
+      args: [
+        "-lc",
+        [
+          "set -euo pipefail",
+          `mkdir -p '${NPM_PREFIX}'`,
+          `export PATH='${NODE_BIN_DIR}:${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'`,
+          `if [ ! -x '${CODEX_BIN_PATH}' ]; then`,
+          `  npm install -g --prefix '${NPM_PREFIX}' @openai/codex`,
+          "fi",
+          `'${CODEX_BIN_PATH}' --version`,
+        ].join("\n"),
+      ],
+      policy: allowAll(),
+    },
     sandbox: {
       driverFactory: createVercelSandboxDriverFactory({
         runtime: "node24",

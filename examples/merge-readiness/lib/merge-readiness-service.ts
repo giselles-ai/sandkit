@@ -7,7 +7,10 @@ import type { PublicWorkspaceHandle, WorkspaceSessionHandle } from "@giselles-ai
 import {
   getMergeReadinessRuntime,
   getOrCreateWorkspaceById,
+  CODEX_BIN_PATH,
   MERGE_READINESS_ROOT,
+  NODE_BIN_DIR,
+  NPM_PREFIX,
   REVIEW_WORKSPACE_PREFIX,
   summarizeWorkspaceId,
 } from "./merge-readiness-app";
@@ -29,10 +32,6 @@ export type ParsedPullRequest = {
   number: number;
   repoSlug: string;
 };
-
-const NPM_PREFIX = "/vercel/sandbox/npm-global";
-const NODE_BIN_DIR = "/vercel/runtimes/node24/bin";
-const CODEX_BIN_PATH = `${NPM_PREFIX}/bin/codex`;
 
 type PullRequestContext = {
   title: string;
@@ -841,39 +840,19 @@ async function ensureRepoPrepared(
   return repoPath;
 }
 
-async function ensureCodexCliBootstrap(workspace: PublicWorkspaceHandle): Promise<void> {
+async function verifySharedCodexCliSetup(workspace: PublicWorkspaceHandle): Promise<void> {
   const check = await workspace.sandbox.runCommand("bash", [
     "-lc",
     [
       "set -euo pipefail",
       `export PATH='${NODE_BIN_DIR}:${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'`,
-      `test -x '${CODEX_BIN_PATH}'`,
       `'${CODEX_BIN_PATH}' --version`,
     ].join("\n"),
   ]);
 
-  if (check.exitCode === 0) {
-    return;
-  }
-
-  const install = await workspace.sandbox.runCommand({
-    command: "bash",
-    args: [
-      "-lc",
-      [
-        "set -euo pipefail",
-        `mkdir -p '${NPM_PREFIX}'`,
-        `export PATH='${NODE_BIN_DIR}:${NPM_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin'`,
-        `npm install -g --prefix '${NPM_PREFIX}' @openai/codex`,
-        `'${CODEX_BIN_PATH}' --version`,
-      ].join("\n"),
-    ],
-    policy: allowAll(),
-  });
-
-  if (install.exitCode !== 0) {
+  if (check.exitCode !== 0) {
     throw new Error(
-      `Codex CLI bootstrap failed:\n${trimHead(install.stderr || install.stdout, 2000)}`,
+      `Shared Codex CLI setup verification failed:\n${trimHead(check.stderr || check.stdout, 2000)}`,
     );
   }
 }
@@ -1094,12 +1073,12 @@ async function startInvestigationSession(
         diffStatBytes: baseline.diffStat.length,
       });
 
-      const codexBootstrapLog = createLogStep("bootstrap_codex_cli", {
+      const codexSetupVerificationLog = createLogStep("verify_shared_codex_cli_setup", {
         reviewId: review.id,
         workspaceId: review.workspace_id,
       });
-      await ensureCodexCliBootstrap(workspace);
-      codexBootstrapLog.success({ codexBin: CODEX_BIN_PATH });
+      await verifySharedCodexCliSetup(workspace);
+      codexSetupVerificationLog.success({ codexBin: CODEX_BIN_PATH });
 
       const prompt = buildDecisionFromContext(pr, context, {
         checks: baseline.checks,
