@@ -14,7 +14,11 @@ import { createOpenClawStore, type OpenClawStore } from "./openclaw-store";
 
 const DEFAULT_AI_GATEWAY = "https://ai-gateway.vercel.sh/v1";
 const DEFAULT_AI_MODEL = "openai/gpt-5.4-mini";
-const DEFAULT_INSTALL_SPEC = "openclaw@latest";
+// openclaw@2026.3.22 was published without dist/control-ui assets upstream.
+// Track https://github.com/openclaw/openclaw/issues/52808 and
+// https://github.com/openclaw/openclaw/pull/52839.
+// Pin the last known good stable release until a fixed version is available.
+const DEFAULT_INSTALL_SPEC = "openclaw@2026.3.13";
 const DEFAULT_PORT = 18_789;
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_WORKSPACE_ID = "openclaw-production";

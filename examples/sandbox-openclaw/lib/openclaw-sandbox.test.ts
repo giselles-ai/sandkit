@@ -104,7 +104,7 @@ type FakeWorkspaceHandle = {
 
 function createRuntimeConfig() {
   return {
-    installSpec: "openclaw@latest",
+    installSpec: "openclaw@2026.3.13",
     aiGatewayApiUrl: "https://api.example.com",
     aiGatewayModel: "gpt-4o-mini",
     gatewayPort: 3000,
@@ -120,7 +120,7 @@ function createOpenClawSessionRecord(
     workspace_id: "openclaw-production",
     sandbox_id: null,
     phase,
-    install_spec: "openclaw@latest",
+    install_spec: "openclaw@2026.3.13",
     public_url: null,
     last_healthy_at: null,
     error_code: null,
