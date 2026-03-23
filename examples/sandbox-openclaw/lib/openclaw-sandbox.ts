@@ -1,5 +1,5 @@
-import { allowServices, aiGateway } from "sandkit";
-import type { PublicWorkspaceHandle } from "sandkit";
+import { allowServices, aiGateway } from "@giselles-ai/sandkit";
+import type { PublicWorkspaceHandle } from "@giselles-ai/sandkit";
 
 import {
   type OpenClawSessionRecord,

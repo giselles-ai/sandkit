@@ -74,7 +74,7 @@ Required environment variables:
 Schema generation and migration:
 
 ```bash
-npx sandkit generate --adapter drizzle --dialect sqlite
+npx @giselles-ai/sandkit generate --adapter drizzle --dialect sqlite
 bun run db:generate # runs drizzle against db/schema/index.ts
 bun run db:migrate
 bun run db:reset   # remove legacy sqlite and run migration from scratch

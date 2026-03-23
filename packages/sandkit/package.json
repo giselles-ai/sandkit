@@ -1,5 +1,5 @@
 {
-  "name": "sandkit",
+  "name": "@giselles-ai/sandkit",
   "version": "0.0.0",
   "private": true,
   "description": "Workspace state, session management, and durable command execution for Vercel Sandbox.",

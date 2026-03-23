@@ -3,11 +3,11 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { sandkit } from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
-import { sandkit } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 
 import { openclawSessions, sandkitPolicies, sandkitRuns, sandkitWorkspaces } from "../db/schema";
 import { createOpenClawStore, type OpenClawStore } from "./openclaw-store";

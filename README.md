@@ -45,20 +45,20 @@ Sandkit is especially useful when an agent or long-running sandbox app needs to 
 ## Install
 
 ```sh
-npm install sandkit
+npm install @giselles-ai/sandkit
 ```
 
 With Drizzle:
 
 ```sh
-npm install sandkit drizzle-orm
+npm install @giselles-ai/sandkit drizzle-orm
 ```
 
 ## Quick Start
 
 ```ts
-import { sandkit, allowServices, codex, gemini } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { sandkit, allowServices, codex, gemini } from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { db } from "@/db";
 
 const appSandkit = sandkit({
@@ -135,8 +135,8 @@ await session.commit();
 The generated schema exports the canonical workspace table as `sandkitWorkspaces`.
 
 ```ts
-import { sandkit, allowServices, codex } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { sandkit, allowServices, codex } from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { db, schema } from "@/db";
 
 const appSandkit = sandkit({
@@ -150,14 +150,14 @@ const appSandkit = sandkit({
 Generate schema:
 
 ```sh
-npx sandkit generate --adapter drizzle --provider sqlite
+npx @giselles-ai/sandkit generate --adapter drizzle --provider sqlite
 npx drizzle-kit generate
 ```
 
 If you already have a Drizzle repo, provider discovery can infer the dialect:
 
 ```sh
-npx sandkit generate
+npx @giselles-ai/sandkit generate
 ```
 
 ## Examples

@@ -1,11 +1,11 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
+import { allowAll, sandkit } from "@giselles-ai/sandkit";
+import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { allowAll, sandkit } from "sandkit";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
-import { createMemoryAdapter } from "sandkit/adapters/memory";
 
 import {
   type InternalRunAdapterContract,
