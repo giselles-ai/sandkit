@@ -11,6 +11,7 @@ import type {
   WorkspaceRecord,
 } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { internalSandboxProvider } from "@giselles-ai/sandkit/integrations/mock";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
@@ -246,9 +247,10 @@ async function runSmoke(): Promise<void> {
     const counter = { bootstrapRuns: 0 };
     const app = sandkit({
       database: drizzleAdapter(db, { provider: "sqlite" }),
-      sandbox: {
-        driverFactory: createSharedSetupSmokeDriverFactory(counter),
-      },
+      sandbox: internalSandboxProvider(
+        createSharedSetupSmokeDriverFactory(counter),
+        "shared-setup",
+      ),
       setup: {
         command: "bootstrap",
         args: [],

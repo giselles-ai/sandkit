@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 
 import { sandkit } from "@giselles-ai/sandkit";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
-import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 
 const SQLITE_PATH = process.env.SMOKE_WORKSPACE_DB_PATH ?? "./smoke-workspaces.sqlite";
 const SANDBOX_TIMEOUT_MS = 60_000;
@@ -24,11 +24,9 @@ async function runSmoke(): Promise<void> {
 
   const app = sandkit({
     database: workspaceAdapter,
-    sandbox: {
-      driverFactory: createVercelSandboxDriverFactory({
-        timeout: SANDBOX_TIMEOUT_MS,
-      }),
-    },
+    sandbox: vercelSandbox({
+      timeout: SANDBOX_TIMEOUT_MS,
+    }),
   });
 
   const workspace = await app.createWorkspace({
@@ -51,11 +49,9 @@ async function runSmoke(): Promise<void> {
   const replayWorkspaceAdapter = createBunSqliteAdapter(replayDatabase);
   const replayKit = sandkit({
     database: replayWorkspaceAdapter,
-    sandbox: {
-      driverFactory: createVercelSandboxDriverFactory({
-        timeout: SANDBOX_TIMEOUT_MS,
-      }),
-    },
+    sandbox: vercelSandbox({
+      timeout: SANDBOX_TIMEOUT_MS,
+    }),
   });
 
   const replayWorkspace = await replayKit.getWorkspace(workspace.id);

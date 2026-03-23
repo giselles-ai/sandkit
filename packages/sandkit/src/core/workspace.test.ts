@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createMemoryAdapter } from "../adapters/memory.ts";
+import { internalSandboxProvider, mockSandbox } from "../integrations/mock.ts";
 import { codex } from "../policies/codex.ts";
 import { allowAll, allowServices } from "../policies/dsl.ts";
 import type {
@@ -9,7 +10,6 @@ import type {
   SandboxDriverFactory,
   WorkspacePolicy,
 } from "../types.ts";
-import { MockSandboxDriverFactory } from "./mock-driver.ts";
 import { sandkit } from "./sandkit.ts";
 import { sharedSetupStateId } from "./workspace.ts";
 
@@ -119,21 +119,19 @@ function createMockSandkit(
 ): ReturnType<typeof sandkit> {
   return sandkit({
     ...input,
-    sandbox: {
-      driverFactory: new MockSandboxDriverFactory(),
-    },
+    sandbox: mockSandbox(),
   });
 }
 
 describe("Workspace session policy lifecycle", () => {
-  test("requires sandbox.driverFactory in construction options", async () => {
+  test("requires sandbox provider in construction options", async () => {
     expect(() => {
       sandkit(undefined as unknown as Parameters<typeof sandkit>[0]);
     }).toThrow("SandkitOptions is required");
 
     expect(() => {
       sandkit({} as Parameters<typeof sandkit>[0]);
-    }).toThrow("SandkitOptions.sandbox.driverFactory is required");
+    }).toThrow("SandkitOptions.sandbox is required. Set it to a Sandkit sandbox provider");
   });
 
   test("restores session policy override when reattaching to an active session", async () => {
@@ -270,9 +268,7 @@ describe("Workspace setup lifecycle", () => {
 
   test("rebuilds stale setup state by rerunning setup", async () => {
     const app = sandkit({
-      sandbox: {
-        driverFactory: createSetupRecoveryDriverFactory(),
-      },
+      sandbox: internalSandboxProvider(createSetupRecoveryDriverFactory(), "setup-recovery-test"),
       setup: {
         command: "echo",
         args: ["bootstrapped", ">", "hello.txt"],

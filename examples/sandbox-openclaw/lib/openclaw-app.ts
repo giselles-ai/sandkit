@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { sandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
-import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 
@@ -136,13 +136,11 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
 
   const app = sandkit({
     database: adapter,
-    sandbox: {
-      driverFactory: createVercelSandboxDriverFactory({
-        runtime: "node24",
-        timeout: parsePositiveMs(SANDBOX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
-        ports: [OPENCLAW_GATEWAY_PORT],
-      }),
-    },
+    sandbox: vercelSandbox({
+      runtime: "node24",
+      timeout: parsePositiveMs(SANDBOX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+      ports: [OPENCLAW_GATEWAY_PORT],
+    }),
   });
 
   return {

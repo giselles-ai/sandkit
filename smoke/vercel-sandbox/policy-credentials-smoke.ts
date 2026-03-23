@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { sandkit, allowService, codex, gemini, github } from "@giselles-ai/sandkit";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
-import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
+import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
 // Internal-seam smoke: policy compile is intentionally validated via package internals.
 
 import { compileVercelNetworkPolicy } from "./internal-seams.ts";
@@ -95,9 +95,7 @@ async function runSmoke(): Promise<void> {
 
   const app = sandkit({
     database: createMemoryAdapter(),
-    sandbox: {
-      driverFactory: new MockSandboxDriverFactory(),
-    },
+    sandbox: mockSandbox(),
   });
   await expectFailure(
     "createWorkspace with explicit secret policy",
@@ -123,9 +121,7 @@ async function runSmoke(): Promise<void> {
   try {
     const sqliteApp = sandkit({
       database: createBunSqliteAdapter(sqlite),
-      sandbox: {
-        driverFactory: new MockSandboxDriverFactory(),
-      },
+      sandbox: mockSandbox(),
     });
     const sqliteWorkspace = await sqliteApp.createWorkspace({ name: "redact-per-run-secret" });
 
