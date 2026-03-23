@@ -20,8 +20,8 @@ describe("Workspace session policy lifecycle", () => {
       },
     ]);
 
-    const app = sandkit({ policy: defaultPolicy });
-    const workspace = await app.createWorkspace();
+    const app = sandkit();
+    const workspace = await app.createWorkspace({ policy: defaultPolicy });
     const session = await workspace.sandbox.openSession();
 
     const before = await session.exec("policy-id");
