@@ -108,7 +108,13 @@ Because setup becomes shared durable state, `setup.policy` must also be durable:
 `setup` durability is adapter-backed. With a persistent adapter such as Bun SQLite or Drizzle, the shared bootstrap survives process restarts. With the default in-memory adapter, it does not.
 
 ```ts
+import { sandkit, allowAll } from "@giselles-ai/sandkit";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
+
 const app = sandkit({
+  sandbox: {
+    driverFactory: createVercelSandboxDriverFactory(),
+  },
   setup: {
     command: "sh",
     args: ["-lc", "npm ci"],

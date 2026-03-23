@@ -1,12 +1,16 @@
 import { sandkit, allowAll, allowService, codex, denyAll } from "@giselles-ai/sandkit";
 // Internal-seam coverage for evaluator behavior (policy DSL contract test)
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
+import { MockSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/mock";
 
 import { evaluateWorkspacePolicy } from "./internal-seams.ts";
 
 async function runSmoke(): Promise<void> {
   const app = sandkit({
     database: createMemoryAdapter(),
+    sandbox: {
+      driverFactory: new MockSandboxDriverFactory(),
+    },
   });
 
   const workspace = await app.createWorkspace({

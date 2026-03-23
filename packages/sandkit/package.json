@@ -85,6 +85,11 @@
       "import": "./dist/integrations/vercel.js",
       "default": "./dist/integrations/vercel.js"
     },
+    "./integrations/mock": {
+      "types": "./dist/integrations/mock.d.ts",
+      "import": "./dist/integrations/mock.js",
+      "default": "./dist/integrations/mock.js"
+    },
     "./cli": {
       "types": "./dist/cli/index.d.ts",
       "import": "./dist/cli/index.js",

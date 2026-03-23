@@ -10,6 +10,7 @@ export default defineConfig([
       "policies/codex": "src/policies/codex.ts",
       "policies/gemini": "src/policies/gemini.ts",
       "policies/ai-gateway": "src/policies/ai-gateway.ts",
+      "integrations/mock": "src/integrations/mock.ts",
       "integrations/vercel": "src/integrations/vercel.ts",
       "schema/index": "src/schema/index.ts",
       "cli/index": "src/cli/index.ts",

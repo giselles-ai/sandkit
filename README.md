@@ -171,6 +171,7 @@ The generated schema exports the canonical workspace table as `sandkitWorkspaces
 ```ts
 import { sandkit, allowServices, codex } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
+import { createVercelSandboxDriverFactory } from "@giselles-ai/sandkit/integrations/vercel";
 import { db, schema } from "@/db";
 
 const appSandkit = sandkit({
@@ -178,6 +179,9 @@ const appSandkit = sandkit({
     provider: "sqlite",
     workspaces: schema.sandkitWorkspaces,
   }),
+  sandbox: {
+    driverFactory: createVercelSandboxDriverFactory(),
+  },
 });
 ```
 
