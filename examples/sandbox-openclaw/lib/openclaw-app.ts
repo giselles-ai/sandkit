@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { sandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
-import { createClient, type Client } from "@libsql/client";
+import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 
 import {
@@ -39,16 +39,6 @@ const DATA_DIR = join(EXAMPLE_ROOT_DIR, "data");
 
 export const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY ?? "";
 
-const REQUIRED_SCHEMA_TABLES = [
-  "sandkit_workspaces",
-  "sandkit_runs",
-  "sandkit_policies",
-  "openclaw_sessions",
-  "__drizzle_migrations",
-] as const;
-
-export const MISSING_SCHEMA_HINT = `Database schema is not initialized.\nRun migration first:\n\n  bun run db:migrate\n\nIf this repository already contains a legacy data file, remove it and rerun migration:\n\n  rm -f data/openclaw.sqlite`;
-
 export type OpenClawRuntimeConfig = {
   workspaceId: string;
   openclawInstallSpec: string;
@@ -63,31 +53,6 @@ export type OpenClawRuntime = {
   store: OpenClawStore;
   config: OpenClawRuntimeConfig;
 };
-
-async function assertSchemaInitialized(sqlite: Client): Promise<void> {
-  const missing: string[] = [];
-
-  try {
-    for (const tableName of REQUIRED_SCHEMA_TABLES) {
-      const result = await sqlite.execute({
-        sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
-        args: [tableName],
-      });
-
-      if (result.rows.length === 0) {
-        missing.push(tableName);
-      }
-    }
-  } catch (error) {
-    throw new Error(
-      `${MISSING_SCHEMA_HINT}Underlying error:\n${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  if (missing.length > 0) {
-    throw new Error(`${MISSING_SCHEMA_HINT}Missing tables: ${missing.join(", ")}`);
-  }
-}
 
 let runtimePromise: Promise<OpenClawRuntime> | null = null;
 
@@ -109,7 +74,6 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
   const sqlite = createClient({
     url: `file:${dbPath}`,
   });
-  await assertSchemaInitialized(sqlite);
 
   const db = drizzle(sqlite, {
     schema: {
