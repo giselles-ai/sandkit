@@ -1,0 +1,212 @@
+:root {
+  --bg-a: #f7faf9;
+  --bg-b: #e4e8f5;
+  --card: rgba(14, 18, 36, 0.86);
+  --line: rgba(255, 255, 255, 0.16);
+  --text: #edf1ff;
+  --muted: #b7bfdc;
+  --accent: #6ad3ff;
+  --danger: #ff9494;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--text);
+  font-family: "Inter", "Avenir Next", "Noto Sans JP", sans-serif;
+  background:
+    radial-gradient(1000px 650px at 12% 12%, var(--bg-b), transparent 56%),
+    radial-gradient(900px 460px at 82% 0%, #c5d0ff, transparent 59%),
+    linear-gradient(155deg, #0b1022 0%, var(--bg-a) 55%, #0f1532 100%);
+}
+
+.grain {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  opacity: 0.23;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.08) 0.3px, transparent 0.3px),
+    radial-gradient(circle at 12% 60%, rgba(255, 255, 255, 0.04) 0.35px, transparent 0.35px);
+  background-size:
+    3px 3px,
+    4px 4px;
+}
+
+.page-root {
+  position: relative;
+  z-index: 1;
+  width: min(1080px, 100% - 2.5rem);
+  margin: 0 auto;
+  padding: 2.25rem 0 3rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  padding: 1rem 1.1rem;
+  backdrop-filter: blur(2px);
+  animation: reveal 220ms ease;
+}
+
+.title {
+  margin: 0.1rem 0 0.75rem;
+  font-size: 1.45rem;
+  letter-spacing: 0.01em;
+  font-family: "Merriweather", "Georgia", serif;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.grid {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.field label {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+input,
+select,
+textarea {
+  border: 1px solid var(--line);
+  background: rgba(8, 11, 28, 0.8);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.58rem 0.76rem;
+  font-size: 0.94rem;
+  font-family: "Inter", "Segoe UI", sans-serif;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(106, 211, 255, 0.5);
+  outline-offset: 1px;
+}
+
+button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.58rem 1rem;
+  color: inherit;
+  background: linear-gradient(165deg, #253067, #18214a);
+  cursor: pointer;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.warn {
+  background: linear-gradient(165deg, #61242a, #9c353d);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.6rem;
+}
+
+.toolbar a {
+  color: var(--accent);
+}
+
+.list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.list-item {
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.status {
+  font-size: 0.78rem;
+  color: #8afca5;
+}
+
+.status.failed {
+  color: var(--danger);
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
+pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px;
+  padding: 0.8rem;
+}
+
+.message {
+  margin: 0;
+  color: var(--danger);
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 780px) {
+  .page-root {
+    width: min(1080px, 100% - 1.1rem);
+  }
+
+  .grid.two {
+    grid-template-columns: 1fr;
+  }
+}

@@ -126,6 +126,7 @@ npx sandkit generate
 ## Examples
 
 - [`examples/sandbox-openclaw`](/Users/satoshi/repo/giselles-ai/sandkit/examples/sandbox-openclaw) shows a production-oriented live session flow with OpenClaw on Vercel Sandbox.
+- [`examples/sandbox-github-triage`](/Users/satoshi/.codex/worktrees/cffe/sandkit/examples/sandbox-github-triage) shows a durable SaaS-oriented GitHub triage flow using `workspace.sandbox.runCommand()`, tracked repos, runs, and artifact accumulation.
 - [`smoke/drizzle-sample`](/Users/satoshi/repo/giselles-ai/sandkit/smoke/drizzle-sample) shows schema generation and Drizzle integration.
 
 ## Status
