@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { sandkit } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { MockSandboxDriverFactory } from "sandkit/integrations/mock";
 
 const SQLITE_PATH = process.env.SMOKE_DRIZZLE_SAMPLE_DB_PATH ?? "./smoke-drizzle-workspaces.sqlite";
 const SCHEMA_PATH = "./generated/sandkit-schema.generated.ts";
@@ -22,6 +23,9 @@ async function run(): Promise<void> {
     database: drizzleAdapter(drizzleDb, {
       provider: "sqlite",
     }),
+    sandbox: {
+      driverFactory: new MockSandboxDriverFactory(),
+    },
   });
 
   const created = await app.createWorkspace({

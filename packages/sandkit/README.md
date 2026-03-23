@@ -59,12 +59,16 @@ npm install sandkit drizzle-orm
 ```ts
 import { sandkit, allowServices, codex, gemini, aiGateway } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 import { db } from "@/db";
 
 const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
+  sandbox: {
+    driverFactory: createVercelSandboxDriverFactory(),
+  },
 });
 
 const workspace = await appSandkit.createWorkspace({
@@ -87,7 +91,13 @@ By default setup runs under the workspace policy; set `setup.policy` when bootst
 Because setup becomes shared durable state, `setup.policy` must also be durable: explicit secret-bearing policies are rejected there.
 
 ```ts
+import { sandkit, allowAll, allowServices, codex, gemini } from "sandkit";
+import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
+
 const app = sandkit({
+  sandbox: {
+    driverFactory: createVercelSandboxDriverFactory(),
+  },
   setup: {
     command: "sh",
     args: ["-lc", "npm ci"],

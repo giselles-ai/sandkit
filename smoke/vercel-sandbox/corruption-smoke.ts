@@ -6,6 +6,7 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { allowAll, sandkit } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
 import { createMemoryAdapter } from "sandkit/adapters/memory";
+import { MockSandboxDriverFactory } from "sandkit/integrations/mock";
 
 import {
   type InternalRunAdapterContract,
@@ -233,6 +234,9 @@ async function runWorkspaceMetadataCorruptionScenario(): Promise<void> {
       database: drizzleAdapter(db, {
         provider: "sqlite",
       }),
+      sandbox: {
+        driverFactory: new MockSandboxDriverFactory(),
+      },
     });
 
     await expectErrorContaining(
@@ -260,7 +264,12 @@ async function runRunArgsCorruptionScenario(corruptedArgs: string, label: string
     const adapter = createCorruptingAdapter(baseAdapter, (runId) => {
       sqlite.query("UPDATE sandkit_runs SET args = ? WHERE id = ?").run(corruptedArgs, runId);
     });
-    const app = sandkit({ database: adapter });
+    const app = sandkit({
+      database: adapter,
+      sandbox: {
+        driverFactory: new MockSandboxDriverFactory(),
+      },
+    });
     const workspace = await app.createWorkspace({ name: label });
 
     await expectErrorContaining(label, () => workspace.sandbox.runCommand("echo", ["hello"]), [
@@ -287,7 +296,12 @@ async function runProviderCommitCorruptionScenario(): Promise<void> {
     const adapter = createCorruptingAdapter(baseAdapter, (runId) => {
       sqlite.query("UPDATE sandkit_runs SET provider_commit = ? WHERE id = ?").run("{", runId);
     });
-    const app = sandkit({ database: adapter });
+    const app = sandkit({
+      database: adapter,
+      sandbox: {
+        driverFactory: new MockSandboxDriverFactory(),
+      },
+    });
     const workspace = await app.createWorkspace({ name: "provider-commit-corruption" });
 
     await expectErrorContaining(

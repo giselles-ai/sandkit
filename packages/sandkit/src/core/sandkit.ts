@@ -6,7 +6,7 @@ import { type PublicWorkspaceHandle, WorkspaceHandle } from "./workspace.ts";
 export class Sandkit {
   readonly #ctx: SandkitContext;
 
-  constructor(options: SandkitOptions = {}) {
+  constructor(options: SandkitOptions) {
     this.#ctx = createSandkitContext(options);
   }
 
@@ -45,6 +45,6 @@ export class Sandkit {
   }
 }
 
-export function sandkit(options: SandkitOptions = {}): Sandkit {
+export function sandkit(options: SandkitOptions): Sandkit {
   return new Sandkit(options);
 }

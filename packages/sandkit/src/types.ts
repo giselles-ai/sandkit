@@ -157,9 +157,7 @@ export interface SandkitOptions {
   readonly database?: SandkitAdapter | undefined;
   readonly setup?: SharedSetup | undefined;
   readonly network?: readonly unknown[] | undefined;
-  readonly sandbox?:
-    | {
-        readonly driverFactory?: SandboxDriverFactory | undefined;
-      }
-    | undefined;
+  readonly sandbox: {
+    readonly driverFactory: SandboxDriverFactory;
+  };
 }

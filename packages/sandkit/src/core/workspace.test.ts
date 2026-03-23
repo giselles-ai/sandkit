@@ -9,6 +9,7 @@ import type {
   SandboxDriverFactory,
   WorkspacePolicy,
 } from "../types.ts";
+import { MockSandboxDriverFactory } from "./mock-driver.ts";
 import { sandkit } from "./sandkit.ts";
 import { sharedSetupStateId } from "./workspace.ts";
 
@@ -113,7 +114,28 @@ function createSetupRecoveryDriverFactory(): SandboxDriverFactory {
   };
 }
 
+function createMockSandkit(
+  input: Omit<Parameters<typeof sandkit>[0], "sandbox"> = {},
+): ReturnType<typeof sandkit> {
+  return sandkit({
+    ...input,
+    sandbox: {
+      driverFactory: new MockSandboxDriverFactory(),
+    },
+  });
+}
+
 describe("Workspace session policy lifecycle", () => {
+  test("requires sandbox.driverFactory in construction options", async () => {
+    expect(() => {
+      sandkit(undefined as unknown as Parameters<typeof sandkit>[0]);
+    }).toThrow("SandkitOptions is required");
+
+    expect(() => {
+      sandkit({} as Parameters<typeof sandkit>[0]);
+    }).toThrow("SandkitOptions.sandbox.driverFactory is required");
+  });
+
   test("restores session policy override when reattaching to an active session", async () => {
     const defaultPolicy = allowServices([
       {
@@ -130,7 +152,7 @@ describe("Workspace session policy lifecycle", () => {
       },
     ]);
 
-    const app = sandkit();
+    const app = createMockSandkit();
     const workspace = await app.createWorkspace({ policy: defaultPolicy });
     const session = await workspace.sandbox.openSession();
 
@@ -150,7 +172,7 @@ describe("Workspace session policy lifecycle", () => {
 
 describe("Workspace setup lifecycle", () => {
   test("runs setup before the first durable command and does not rerun it once state exists", async () => {
-    const app = sandkit({
+    const app = createMockSandkit({
       setup: {
         command: "echo",
         args: ["hello", ">", "hello.txt"],
@@ -186,7 +208,7 @@ describe("Workspace setup lifecycle", () => {
   });
 
   test("runs setup before the first session and persists the successful setup state", async () => {
-    const app = sandkit({
+    const app = createMockSandkit({
       setup: {
         command: "echo",
         args: ["ready", ">", "hello.txt"],
@@ -217,7 +239,7 @@ describe("Workspace setup lifecycle", () => {
   });
 
   test("does not persist setup state when setup command fails", async () => {
-    const app = sandkit({
+    const app = createMockSandkit({
       setup: {
         command: "unsupported",
       },
@@ -282,14 +304,14 @@ describe("Workspace setup lifecycle", () => {
 
   test("isolates bootstrap state per setup command shape", async () => {
     const adapter = createMemoryAdapter();
-    const first = sandkit({
+    const first = createMockSandkit({
       database: adapter,
       setup: {
         command: "echo",
         args: ["first", ">", "hello.txt"],
       },
     });
-    const second = sandkit({
+    const second = createMockSandkit({
       database: adapter,
       setup: {
         command: "echo",
@@ -327,14 +349,14 @@ describe("Workspace setup lifecycle", () => {
 
   test("isolates bootstrap state per setup policy shape", async () => {
     const adapter = createMemoryAdapter();
-    const first = sandkit({
+    const first = createMockSandkit({
       database: adapter,
       setup: {
         command: "echo",
         args: ["shared", ">", "hello.txt"],
       },
     });
-    const second = sandkit({
+    const second = createMockSandkit({
       database: adapter,
       setup: {
         command: "echo",
@@ -350,7 +372,7 @@ describe("Workspace setup lifecycle", () => {
   });
 
   test("rejects explicit secret-bearing setup policy", async () => {
-    const app = sandkit({
+    const app = createMockSandkit({
       setup: {
         command: "echo",
         args: ["shared", ">", "hello.txt"],

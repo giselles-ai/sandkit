@@ -59,12 +59,16 @@ npm install sandkit drizzle-orm
 ```ts
 import { sandkit, allowServices, codex, gemini } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
+import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 import { db } from "@/db";
 
 const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
+  sandbox: {
+    driverFactory: createVercelSandboxDriverFactory(),
+  },
 });
 
 const workspace = await appSandkit.createWorkspace({
@@ -138,12 +142,16 @@ The generated schema exports the canonical workspace table as `sandkitWorkspaces
 import { sandkit, allowServices, codex } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
 import { db, schema } from "@/db";
+import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 
 const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
     workspaces: schema.sandkitWorkspaces,
   }),
+  sandbox: {
+    driverFactory: createVercelSandboxDriverFactory(),
+  },
 });
 ```
 
