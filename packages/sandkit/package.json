@@ -97,7 +97,8 @@
     "fmt": "oxfmt src tsup.config.ts",
     "fmt:check": "oxfmt --check src tsup.config.ts",
     "build": "bun run clean && tsup",
-    "clean": "del-cli dist *.tsbuildinfo"
+    "clean": "del-cli dist *.tsbuildinfo",
+    "prepack": "bun run build"
   },
   "dependencies": {
     "@vercel/sandbox": "1.8.1"
