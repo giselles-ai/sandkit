@@ -1,6 +1,8 @@
 # Sandkit
 
-Sandkit is a TypeScript toolkit for building durable app workflows on Vercel Sandbox.
+Sandkit makes Vercel Sandbox stateful.
+
+Sandkit adds workspace state, session management, durable command execution, and resumable sandbox workflows to Vercel Sandbox.
 
 It keeps two paths explicit:
 
@@ -8,6 +10,37 @@ It keeps two paths explicit:
 - `openSession()` / `attachSession()` for a live leased sandbox when you need an interactive process
 
 Provider-specific behavior still matters, but the public API stays centered on workspaces, policies, and durable state.
+
+## Problem
+
+Vercel Sandbox is ephemeral by design. It does not give you durable workspaces, session lifecycle, or a clear boundary between one-shot commands and live attached execution.
+
+- No built-in workspace identity or durable workspace state
+- No session management abstraction for live attach / resume
+- No durable command boundary for one-command-at-a-time work
+- Teams end up rebuilding the same sandbox state and lifecycle layer around jobs, agents, and recovery flows
+
+## Solution
+
+Sandkit adds a workspace state layer on top of Vercel Sandbox:
+
+- Persistent workspaces for sandbox state management
+- Live session lifecycle with explicit attach / commit semantics
+- Durable command execution through `runCommand(...)` for committed work
+- Policy controls that stay part of workspace state
+- Resumable sandbox workflows for long-running apps and control planes
+
+## Positioning
+
+| Tool                                  | Responsibility                                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Vercel Sandbox                        | Ephemeral execution environment                                                                                          |
+| Sandkit                               | State and lifecycle layer for sandboxed execution: workspaces, session lifecycle, durable command boundaries, and resume |
+| Workflow engines / app control planes | Decide when and why work runs                                                                                            |
+
+## Primary Use Case: Persistent Workspaces for AI Coding Agents
+
+Sandkit is especially useful when an agent or long-running sandbox app needs to keep a workspace alive across runs, attach to a live process, expose a public URL, and commit progress durably.
 
 ## Install
 
@@ -32,10 +65,11 @@ const appSandkit = sandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
   }),
-  policy: allowServices([codex(), gemini()]),
 });
 
-const workspace = await appSandkit.createWorkspace();
+const workspace = await appSandkit.createWorkspace({
+  policy: allowServices([codex(), gemini()]),
+});
 
 await workspace.sandbox.runCommand({
   command: "sh",
@@ -68,9 +102,13 @@ await workspace.sandbox.runCommand({
 });
 ```
 
-Durable default policy lives on the workspace:
+Durable default policy belongs to the workspace. Set it when creating the workspace or update it later:
 
 ```ts
+const workspace = await appSandkit.createWorkspace({
+  policy: allowServices([codex()]),
+});
+
 await workspace.setPolicy(allowServices([codex()]));
 ```
 
@@ -106,7 +144,6 @@ const appSandkit = sandkit({
     provider: "sqlite",
     workspaces: schema.sandkitWorkspaces,
   }),
-  policy: allowServices([codex()]),
 });
 ```
 

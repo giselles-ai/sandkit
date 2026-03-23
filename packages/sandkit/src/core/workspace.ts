@@ -1,3 +1,4 @@
+import { allowAll } from "../policies/dsl.ts";
 import type {
   RunFinishInput as AdapterRunFinishInput,
   SandboxDriver,
@@ -263,7 +264,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   }
 
   private async resolveSandboxDriver(workspace: WorkspaceRecord): Promise<SandboxDriver> {
-    const policy = readWorkspacePolicy(workspace, this.#ctx.defaultPolicy);
+    const policy = readWorkspacePolicy(workspace, allowAll());
     const resumeState = toDriverResumeState(this.#sandboxState);
     return resumeState
       ? await this.#ctx.driverFactory.resumeSandbox(workspace, resumeState, { policy })
@@ -326,7 +327,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
 
   private async resolveDefaultPolicy(): Promise<WorkspacePolicy> {
     const workspace = await this.resolveLatestWorkspace();
-    return readWorkspacePolicy(workspace, this.#ctx.defaultPolicy);
+    return readWorkspacePolicy(workspace, allowAll());
   }
 }
 

@@ -7,10 +7,12 @@ import { evaluateWorkspacePolicy } from "./internal-seams.ts";
 async function runSmoke(): Promise<void> {
   const app = sandkit({
     database: createMemoryAdapter(),
-    policy: denyAll(),
   });
 
-  const workspace = await app.createWorkspace({ name: "policy-smoke" });
+  const workspace = await app.createWorkspace({
+    name: "policy-smoke",
+    policy: denyAll(),
+  });
   const initial = await workspace.sandbox.runCommand({ command: "policy-id" });
   if (initial.stdout.trim() !== "deny-all") {
     throw new Error(

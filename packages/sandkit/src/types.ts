@@ -134,7 +134,6 @@ export interface SandboxDriverFactory {
 
 export interface SandkitOptions {
   readonly database?: SandkitAdapter | undefined;
-  readonly policy?: WorkspacePolicy | undefined;
   readonly network?: readonly unknown[] | undefined;
   readonly sandbox?:
     | {

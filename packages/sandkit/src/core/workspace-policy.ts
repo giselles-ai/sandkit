@@ -13,7 +13,7 @@ import {
 } from "../policies/dsl.ts";
 import type { WorkspacePolicy } from "../policies/types.ts";
 
-const WORKSPACE_POLICY_METADATA_KEY = "sandkit:policy";
+export const WORKSPACE_POLICY_METADATA_KEY = "sandkit:policy";
 
 function corruptionError(reason: string): Error {
   return new Error(`Sandkit durable state corruption in sandkit_workspaces.metadata: ${reason}`);
@@ -40,6 +40,21 @@ export function asWorkspacePolicyMetadata(policy: WorkspacePolicy): WorkspaceMet
   return {
     [WORKSPACE_POLICY_METADATA_KEY]: serializeWorkspacePolicy(policy),
   };
+}
+
+export function removeWorkspacePolicyMetadata(
+  metadata?: WorkspaceMetadata | undefined,
+): WorkspaceMetadata | undefined {
+  if (!metadata || typeof metadata !== "object") {
+    return metadata;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(metadata, WORKSPACE_POLICY_METADATA_KEY)) {
+    return metadata;
+  }
+
+  const { [WORKSPACE_POLICY_METADATA_KEY]: _policyMetadata, ...rest } = metadata;
+  return rest;
 }
 
 export function asWorkspacePolicyPatch(policy: WorkspacePolicy): WorkspaceUpdateInput {
