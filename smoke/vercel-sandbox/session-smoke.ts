@@ -1,5 +1,6 @@
 import { sandkit } from "sandkit";
 import { createMemoryAdapter } from "sandkit/adapters/memory";
+import { MockSandboxDriverFactory } from "sandkit/integrations/mock";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {
@@ -159,7 +160,12 @@ async function runPublicSessionSmoke(app: ReturnType<typeof sandkit>): Promise<v
 async function runStateRecoverySmoke(
   adapter: ReturnType<typeof createMemoryAdapter>,
 ): Promise<void> {
-  const app = sandkit({ database: adapter });
+  const app = sandkit({
+    database: adapter,
+    sandbox: {
+      driverFactory: new MockSandboxDriverFactory(),
+    },
+  });
 
   const workspaceWithNonAttachable = await app.createWorkspace({
     name: "session-non-attachable-smoke",
@@ -216,7 +222,12 @@ async function runStateRecoverySmoke(
 
 async function runSmoke(): Promise<void> {
   const adapter = createMemoryAdapter();
-  const app = sandkit({ database: adapter });
+  const app = sandkit({
+    database: adapter,
+    sandbox: {
+      driverFactory: new MockSandboxDriverFactory(),
+    },
+  });
 
   await runPublicSessionSmoke(app);
   // Internal-state seam checks intentionally remain explicit here:
