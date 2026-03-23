@@ -2,14 +2,22 @@
   "name": "sandkit",
   "version": "0.0.0",
   "private": true,
-  "description": "TypeScript toolkit for durable app workflows on Vercel Sandbox.",
+  "description": "Workspace state, session management, and durable command execution for Vercel Sandbox.",
   "keywords": [
     "agent",
     "drizzle",
+    "durable-execution",
+    "resumable-workflows",
     "sandbox",
+    "sandbox-orchestration",
+    "session-management",
+    "state-management",
+    "stateful-sandbox",
     "typescript",
     "vercel",
-    "workflow"
+    "vercel-sandbox",
+    "workflow",
+    "workspace"
   ],
   "homepage": "https://github.com/giselles-ai/sandkit",
   "bugs": {
