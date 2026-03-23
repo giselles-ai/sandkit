@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import type { CommandResult } from "sandkit";
 
 import {
@@ -24,7 +25,10 @@ type FakeSessionHandle = {
   url: (port: number) => Promise<string>;
   exec: FakeSessionExec;
   startProcess: {
-    (command: string, args: string[]): Promise<{
+    (
+      command: string,
+      args: string[],
+    ): Promise<{
       processId: string;
       wait: () => Promise<FakeExecResult>;
     }>;
@@ -89,9 +93,9 @@ function createFakeSession() {
     commandOrInput: string | { command: string; args?: readonly string[] },
     argsInput: readonly string[] = [],
   ) => {
-    const command =
-      typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
-    const args = typeof commandOrInput === "string" ? argsInput ?? [] : commandOrInput.args ?? [];
+    const command = typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
+    const args =
+      typeof commandOrInput === "string" ? (argsInput ?? []) : (commandOrInput.args ?? []);
 
     const commandLine = `${command} ${args.join(" ")}`;
     commandLog.push({ command, args: [...args] });
@@ -153,7 +157,8 @@ function createWorkspaceHarness(
     shouldOpenSession?: boolean;
   },
 ) {
-  const { commandLog, session, getBootstrapCheckCalls, getExtendTimeoutCalls } = createFakeSession();
+  const { commandLog, session, getBootstrapCheckCalls, getExtendTimeoutCalls } =
+    createFakeSession();
   let activeLease: FakeWorkspaceLease | null = firstLease;
   let getActiveLeaseCalls = 0;
   let attachSessionCalls = 0;
@@ -179,9 +184,9 @@ function createWorkspaceHarness(
       },
       attachSession: async () => {
         attachSessionCalls += 1;
-      if (options?.shouldAttachSession === false) {
-        throw new Error("attachSession was not expected for this fixture");
-      }
+        if (options?.shouldAttachSession === false) {
+          throw new Error("attachSession was not expected for this fixture");
+        }
         return session;
       },
       openSession: async () => {
@@ -217,9 +222,8 @@ function hasCommand(commandLog: FakeCommandCall[], needle: string): boolean {
 }
 
 function getCommandCount(commandLog: FakeCommandCall[], needle: string): number {
-  return commandLog.filter(({ command, args }) =>
-    `${command} ${args.join(" ")}`.includes(needle),
-  ).length;
+  return commandLog.filter(({ command, args }) => `${command} ${args.join(" ")}`.includes(needle))
+    .length;
 }
 
 describe("openclaw sandbox retry behavior", () => {
@@ -258,7 +262,7 @@ describe("openclaw sandbox retry behavior", () => {
       argsInput: readonly string[] = [],
     ) => {
       const command = typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
-      const args = typeof commandOrInput === "string" ? argsInput : commandOrInput.args ?? [];
+      const args = typeof commandOrInput === "string" ? argsInput : (commandOrInput.args ?? []);
       expect(command).toBe("bash");
       expect(args).toEqual(["-lc", "cat '/vercel/sandbox/home/.openclaw/auth-token.txt'"]);
       return {
@@ -268,13 +272,15 @@ describe("openclaw sandbox retry behavior", () => {
       };
     }) as FakeSessionExec;
 
-  const session: FakeSessionHandle = {
-    url: async (_port?: number) => "",
-    exec,
-    startProcess: async (_commandOrInput: string | { command: string; args?: readonly string[] }) => ({
-      processId: "",
-      wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-    }),
+    const session: FakeSessionHandle = {
+      url: async (_port?: number) => "",
+      exec,
+      startProcess: async (
+        _commandOrInput: string | { command: string; args?: readonly string[] },
+      ) => ({
+        processId: "",
+        wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      }),
       extendTimeout: async () => undefined,
       commit: async () => undefined,
     };
@@ -285,15 +291,15 @@ describe("openclaw sandbox retry behavior", () => {
   });
 
   test("readSessionToken returns empty string when token read fails", async () => {
-  const session: FakeSessionHandle = {
-    url: async (_port?: number) => "",
-    exec: (async () => {
-      throw new Error("missing token file");
-    }) as FakeSessionExec,
-    startProcess: async (_commandOrInput) => ({
-      processId: "",
-      wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-    }),
+    const session: FakeSessionHandle = {
+      url: async (_port?: number) => "",
+      exec: (async () => {
+        throw new Error("missing token file");
+      }) as FakeSessionExec,
+      startProcess: async (_commandOrInput) => ({
+        processId: "",
+        wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      }),
       extendTimeout: async () => undefined,
       commit: async () => undefined,
     };
@@ -320,7 +326,8 @@ describe("openclaw sandbox retry behavior", () => {
 
     const originalFetch = globalThis.fetch;
     try {
-      globalThis.fetch = (async () => new Response("ready", { status: 200 })) as unknown as typeof fetch;
+      globalThis.fetch = (async () =>
+        new Response("ready", { status: 200 })) as unknown as typeof fetch;
       const { url } = await ensureGatewayRunning(
         workspace,
         { id: "session-1" },
@@ -337,24 +344,26 @@ describe("openclaw sandbox retry behavior", () => {
       expect(calls.getActiveLease()).toBe(2);
       expect(getBootstrapCheckCalls()).toBe(2);
       expect(getExtendTimeoutCalls()).toEqual([requiredLeaseMs - existingLease.remainingMs]);
-      expect(getCommandCount(commandLog, "mkdir -p '/vercel/sandbox/home/.openclaw'")).toBeGreaterThanOrEqual(
-        1,
-      );
+      expect(
+        getCommandCount(commandLog, "mkdir -p '/vercel/sandbox/home/.openclaw'"),
+      ).toBeGreaterThanOrEqual(1);
       expect(
         getCommandCount(commandLog, "npm install -g --prefix /vercel/sandbox/npm-global"),
       ).toBeGreaterThanOrEqual(1);
       expect(getCommandCount(commandLog, "openclaw.json")).toBeGreaterThanOrEqual(1);
       expect(getCommandCount(commandLog, "start-openclaw-gateway.sh")).toBeGreaterThanOrEqual(1);
-      expect(hasCommand(commandLog, "cat '/vercel/sandbox/home/.openclaw/auth-token.txt'")).toBe(true);
-      expect(
-        hasCommand(commandLog, "test -x '/vercel/sandbox/npm-global/bin/openclaw'"),
-      ).toBe(true);
+      expect(hasCommand(commandLog, "cat '/vercel/sandbox/home/.openclaw/auth-token.txt'")).toBe(
+        true,
+      );
+      expect(hasCommand(commandLog, "test -x '/vercel/sandbox/npm-global/bin/openclaw'")).toBe(
+        true,
+      );
 
       expect(updates.some((update) => update.phase === "repairing")).toBe(true);
       expect(updates.some((update) => update.phase === "ready")).toBe(true);
-      expect(
-        updates.find((update) => update.phase === "repairing")?.error_code,
-      ).toBe("bootstrap_missing");
+      expect(updates.find((update) => update.phase === "repairing")?.error_code).toBe(
+        "bootstrap_missing",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -377,7 +386,8 @@ describe("openclaw sandbox retry behavior", () => {
 
     const originalFetch = globalThis.fetch;
     try {
-      globalThis.fetch = (async () => new Response("ready", { status: 200 })) as unknown as typeof fetch;
+      globalThis.fetch = (async () =>
+        new Response("ready", { status: 200 })) as unknown as typeof fetch;
       const { url } = await ensureGatewayRunning(
         workspace,
         { id: "session-fresh" },
@@ -397,9 +407,9 @@ describe("openclaw sandbox retry behavior", () => {
         OPENCLAW_STARTUP_LEASE_CUSHION_MS - leaseAfterOpenSession.remainingMs,
       ]);
 
-      expect(getCommandCount(commandLog, "mkdir -p '/vercel/sandbox/home/.openclaw'")).toBeGreaterThanOrEqual(
-        1,
-      );
+      expect(
+        getCommandCount(commandLog, "mkdir -p '/vercel/sandbox/home/.openclaw'"),
+      ).toBeGreaterThanOrEqual(1);
       expect(
         getCommandCount(commandLog, "npm install -g --prefix /vercel/sandbox/npm-global"),
       ).toBeGreaterThanOrEqual(1);
@@ -422,8 +432,9 @@ describe("openclaw sandbox retry behavior", () => {
         commandOrInput: string | { command: string; args?: readonly string[] },
         argsInput: readonly string[] = [],
       ) => {
-        const command = typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
-        const args = typeof commandOrInput === "string" ? argsInput : commandOrInput.args ?? [];
+        const command =
+          typeof commandOrInput === "string" ? commandOrInput : commandOrInput.command;
+        const args = typeof commandOrInput === "string" ? argsInput : (commandOrInput.args ?? []);
         const commandLine = `${command} ${args.join(" ")}`;
         if (commandLine.includes("test -x '/vercel/sandbox/npm-global/bin/openclaw'")) {
           bootstrapCheckCalls += 1;
@@ -436,7 +447,9 @@ describe("openclaw sandbox retry behavior", () => {
 
         return { exitCode: 0, stdout: "", stderr: "" };
       }) as FakeSessionExec,
-      startProcess: async (_commandOrInput: string | { command: string; args?: readonly string[] }) => ({
+      startProcess: async (
+        _commandOrInput: string | { command: string; args?: readonly string[] },
+      ) => ({
         processId: "123",
         wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
       }),
@@ -445,16 +458,16 @@ describe("openclaw sandbox retry behavior", () => {
       },
       commit: async () => undefined,
     };
-  const workspace: FakeWorkspaceHandle = {
-    id: "openclaw-production",
-    record: {
+    const workspace: FakeWorkspaceHandle = {
       id: "openclaw-production",
-      status: "active",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    setPolicy: async () => undefined,
-    sandbox: {
+      record: {
+        id: "openclaw-production",
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      setPolicy: async () => undefined,
+      sandbox: {
         getActiveLease: async () => ({
           sandboxId: "sbx_abc123",
           remainingMs: 60_000,
@@ -469,7 +482,8 @@ describe("openclaw sandbox retry behavior", () => {
     const updates: Record<string, unknown>[] = [];
     const originalFetch = globalThis.fetch;
     try {
-      globalThis.fetch = (async () => new Response("ready", { status: 200 })) as unknown as typeof fetch;
+      globalThis.fetch = (async () =>
+        new Response("ready", { status: 200 })) as unknown as typeof fetch;
       const start = ensureGatewayRunning(
         workspace,
         { id: "session-fresh-failed-bootstrap" },
@@ -485,10 +499,12 @@ describe("openclaw sandbox retry behavior", () => {
       );
       expect(extendTimeoutCalls).toEqual([OPENCLAW_STARTUP_LEASE_CUSHION_MS - 60_000]);
       expect(updates.some((update) => update.phase === "failed")).toBe(true);
-      const failed = updates.find((update) => update.phase === "failed") as {
-        error_code?: string | null;
-        error_message?: string | null;
-      } | undefined;
+      const failed = updates.find((update) => update.phase === "failed") as
+        | {
+            error_code?: string | null;
+            error_message?: string | null;
+          }
+        | undefined;
       expect(failed?.error_code).toBe("bootstrap_missing");
       expect(failed?.error_message).toBe(
         "OpenClaw bootstrap artifacts are still missing for session session-fresh-failed-bootstrap after repair attempt.",
@@ -513,7 +529,8 @@ describe("openclaw sandbox retry behavior", () => {
 
     const originalFetch = globalThis.fetch;
     try {
-      globalThis.fetch = (async () => new Response("ready", { status: 200 })) as unknown as typeof fetch;
+      globalThis.fetch = (async () =>
+        new Response("ready", { status: 200 })) as unknown as typeof fetch;
       await ensureGatewayRunning(
         workspace,
         { id: "session-no-extend-needed" },

@@ -81,7 +81,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     if (payload.action === "createWorkspace") {
       return NextResponse.json(
-        { error: error instanceof Error ? error.message : "Failed to start create-workspace workflow." },
+        {
+          error:
+            error instanceof Error ? error.message : "Failed to start create-workspace workflow.",
+        },
         { status: 500 },
       );
     }

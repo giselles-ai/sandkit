@@ -484,10 +484,7 @@ export default function Page() {
     }
   }, [activeRun?.status, stopRunStream]);
 
-  async function runAction(
-    action: "extendSession" | "commitSession",
-    durationMs?: number,
-  ) {
+  async function runAction(action: "extendSession" | "commitSession", durationMs?: number) {
     if (busy) {
       return;
     }

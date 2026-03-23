@@ -635,7 +635,9 @@ export async function ensureGatewayRunning(
       updated_at: new Date(),
     });
     finalBootstrapFailureStep.failure(
-      new Error(`OpenClaw bootstrap artifacts are still missing for session ${openclawSession.id} after ${bootstrapRepairMode}.`),
+      new Error(
+        `OpenClaw bootstrap artifacts are still missing for session ${openclawSession.id} after ${bootstrapRepairMode}.`,
+      ),
     );
     throw new Error(
       `OpenClaw bootstrap artifacts are still missing for session ${openclawSession.id} after ${bootstrapRepairMode}.`,

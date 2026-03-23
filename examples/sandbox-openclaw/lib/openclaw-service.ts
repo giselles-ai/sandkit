@@ -54,10 +54,7 @@ export type OpenClawStartProgress = {
   }) => Promise<void> | void;
 };
 
-type OpenClawCreateStep =
-  | "prepare_workspace"
-  | "durable_bootstrap"
-  | "verify_bootstrap";
+type OpenClawCreateStep = "prepare_workspace" | "durable_bootstrap" | "verify_bootstrap";
 
 type OpenClawCreateProgress = {
   onStep?: (input: {
@@ -66,10 +63,7 @@ type OpenClawCreateProgress = {
     detail?: string;
     ts?: string;
   }) => Promise<void> | void;
-  onPhase?: (
-    _phase: string,
-    _details: Record<string, unknown>,
-  ) => Promise<void> | void;
+  onPhase?: (_phase: string, _details: Record<string, unknown>) => Promise<void> | void;
 };
 
 type Runtime = {
@@ -529,8 +523,7 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
       | undefined;
     let didFail = false;
 
-    const requiredLeaseMs =
-      safeDurationMs > 0 ? safeDurationMs : OPENCLAW_STARTUP_LEASE_CUSHION_MS;
+    const requiredLeaseMs = safeDurationMs > 0 ? safeDurationMs : OPENCLAW_STARTUP_LEASE_CUSHION_MS;
 
     try {
       const config = facade.getSandboxConfig();
