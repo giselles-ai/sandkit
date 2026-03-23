@@ -129,6 +129,7 @@ async function runOpenClawStartSessionStep(
     });
 
     const finalOutput: OpenClawStartFinalOutput = {
+      kind: "startSession",
       openclawSessionId,
       sandboxId: state.sandboxId,
       openclawUrl: state.openclawUrl,

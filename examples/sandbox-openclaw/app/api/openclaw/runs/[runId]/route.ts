@@ -9,6 +9,8 @@ type RouteParams = {
 };
 
 type RunOutput = {
+  kind?: "createWorkspace" | "startSession";
+  workspaceId?: string;
   openclawSessionId?: string;
   sandboxId?: string;
   openclawUrl?: string;

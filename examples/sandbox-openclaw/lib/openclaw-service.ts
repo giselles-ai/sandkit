@@ -4,6 +4,7 @@ import { getOpenClawRuntime, type OpenClawRuntime } from "./openclaw-app";
 import {
   bootstrapOpenClawInWorkspace,
   ensureGatewayRunning,
+  OPENCLAW_STARTUP_LEASE_CUSHION_MS,
   isOpenClawReady,
   readBootstrapStatusInWorkspace,
   readSessionToken,
@@ -53,10 +54,22 @@ export type OpenClawStartProgress = {
   }) => Promise<void> | void;
 };
 
+type OpenClawCreateStep = "prepare_workspace" | "durable_bootstrap" | "verify_bootstrap";
+
+type OpenClawCreateProgress = {
+  onStep?: (input: {
+    step: OpenClawCreateStep;
+    status: "started" | "completed";
+    detail?: string;
+    ts?: string;
+  }) => Promise<void> | void;
+  onPhase?: (_phase: string, _details: Record<string, unknown>) => Promise<void> | void;
+};
+
 type Runtime = {
   readonly workspace: () => Promise<PublicWorkspaceHandle | null>;
   readonly getState: () => Promise<OpenClawState>;
-  readonly createWorkspace: () => Promise<OpenClawState>;
+  readonly createWorkspace: (progress?: OpenClawCreateProgress) => Promise<OpenClawState>;
   readonly startSession: (
     durationMs?: number,
     progress?: OpenClawStartProgress,
@@ -337,7 +350,17 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
 
   async function bootstrapSessionRecord(session: OpenClawSessionRecord): Promise<boolean> {
     const workspace = await workspaceOrThrow();
-    await bootstrapOpenClawInWorkspace(workspace, facade.getSandboxConfig());
+    try {
+      await bootstrapOpenClawInWorkspace(workspace, facade.getSandboxConfig());
+    } catch (error) {
+      await store.updateOpenClawSessionRecord(session.id, {
+        phase: "failed",
+        error_code: "bootstrap_failed",
+        error_message: error instanceof Error ? error.message : String(error),
+        updated_at: nowDate(),
+      });
+      return false;
+    }
     const bootstrapReady = await readBootstrapStatusInWorkspace(workspace);
 
     if (!bootstrapReady) {
@@ -367,8 +390,13 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
     workspaceId: string,
     session: OpenClawSessionRecord,
     reason: string,
+    options?: {
+      activeSessionId?: string | null;
+    },
   ): Promise<never> {
     const timestamp = nowDate();
+    const previousSummary = await store.loadOpenClawSummary(workspaceId);
+    const hasDurableBootstrap = await store.hasDurableOpenClawBootstrap(workspaceId);
     await store.updateOpenClawSessionRecord(session.id, {
       phase: "failed",
       error_code: "transition_failed",
@@ -377,8 +405,13 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
       updated_at: timestamp,
     });
     await store.updateOpenClawSummary(workspaceId, {
-      phase: "bootstrapped",
-      activeSessionId: session.id,
+      ...(hasDurableBootstrap ? { phase: previousSummary.phase } : {}),
+      activeSessionId:
+        options?.activeSessionId === undefined
+          ? hasDurableBootstrap
+            ? previousSummary.activeSessionId
+            : null
+          : options.activeSessionId,
       lastErrorAt: timestamp.toISOString(),
     });
     throw new Error(reason);
@@ -388,38 +421,68 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
     return createReadState(facade, store)();
   }
 
-  async function createWorkspace(): Promise<OpenClawState> {
+  async function createWorkspace(progress?: OpenClawCreateProgress): Promise<OpenClawState> {
+    const emitStep: OpenClawCreateProgress["onStep"] = async (input) => {
+      if (progress?.onStep) {
+        await progress.onStep({ ...input, ts: new Date().toISOString() });
+      }
+    };
+
+    const createStep = createLogStep("createWorkspace", {
+      workspaceId: runtime.config.workspaceId,
+    });
     const existing = await loadWorkspace();
     if (existing) {
       throw new Error("Workspace already exists.");
     }
 
+    await emitStep({ step: "prepare_workspace", status: "started" });
     const workspace = await runtime.app.createWorkspace({
       id: runtime.config.workspaceId,
       name: "openclaw-demo",
     });
+    await emitStep({
+      step: "prepare_workspace",
+      status: "completed",
+      detail: `Created workspace ${workspace.id}.`,
+    });
+
+    await emitStep({ step: "durable_bootstrap", status: "started" });
     const session = await store.createOpenClawSession(
       workspace.id,
       "bootstrapping",
       runtime.config.openclawInstallSpec,
     );
-    await store.updateOpenClawSummary(workspace.id, {
-      phase: "bootstrapped",
-      activeSessionId: session.id,
-      lastErrorAt: null,
-    });
     const bootstrapped = await bootstrapSessionRecord(session);
+    await emitStep({
+      step: "durable_bootstrap",
+      status: "completed",
+      detail: `Durable bootstrap installation ran for workspace ${workspace.id}.`,
+    });
+    await emitStep({ step: "verify_bootstrap", status: "started" });
     if (!bootstrapped) {
       await markSessionFailure(
         workspace.id,
         session,
         "OpenClaw bootstrap artifacts missing after initial bootstrap.",
+        {
+          activeSessionId: null,
+        },
       );
     }
+
+    await emitStep({
+      step: "verify_bootstrap",
+      status: "completed",
+      detail: `Verified bootstrap artifacts for workspace ${workspace.id}.`,
+    });
     await store.updateOpenClawSummary(workspace.id, {
       phase: "bootstrapped",
-      activeSessionId: session.id,
+      activeSessionId: null,
       lastErrorAt: null,
+    });
+    createStep.success({
+      workspaceId: workspace.id,
     });
     return getState();
   }
@@ -445,24 +508,6 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
       workspace.id,
       runtime.config.openclawInstallSpec,
     );
-    const activeSessionState = await readActiveWorkspaceState(
-      workspace,
-      session.public_url,
-      facade,
-    );
-    const isRepair = Boolean(
-      activeSessionState?.hasActiveSession && !activeSessionState.openclawUrl,
-    );
-
-    await store.updateOpenClawSessionRecord(session.id, {
-      phase: "bootstrapped",
-      updated_at: nowDate(),
-    });
-    await store.updateOpenClawSummary(workspace.id, {
-      phase: "bootstrapped",
-      activeSessionId: session.id,
-      lastErrorAt: null,
-    });
 
     await emitStep({ step: "resolve_start_attempt", status: "started" });
     await emitStep({ step: "resolve_start_attempt", status: "completed" });
@@ -478,6 +523,8 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
       | undefined;
     let didFail = false;
 
+    const requiredLeaseMs = safeDurationMs > 0 ? safeDurationMs : OPENCLAW_STARTUP_LEASE_CUSHION_MS;
+
     try {
       const config = facade.getSandboxConfig();
       startupResult = await ensureGatewayRunning(
@@ -487,7 +534,7 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
           await store.updateOpenClawSessionRecord(openclawSessionId, update);
         },
         config,
-        isRepair,
+        requiredLeaseMs,
         async (phase: OpenClawStartProgressPhase) => {
           await emitPhase(phase, { openclawSessionId: session.id });
           await store.updateOpenClawSummary(workspace.id, {
@@ -504,6 +551,9 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
           workspace.id,
           session,
           "OpenClaw UI is not publicly reachable after startup.",
+          {
+            activeSessionId: session.id,
+          },
         );
       } else {
         await store.updateOpenClawSummary(workspace.id, {
@@ -522,6 +572,9 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
         workspace.id,
         session,
         `Failed to start OpenClaw session: ${isErrorMessage(error)}`,
+        {
+          activeSessionId: session.id,
+        },
       );
     }
 
@@ -562,15 +615,6 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
         sandboxId: nextState.sandboxId ?? null,
         openclawUrl: nextState.openclawUrl ?? null,
       });
-    }
-
-    if (safeDurationMs > 0 && startupResult?.lease) {
-      const extraMs = safeDurationMs - startupResult.lease.remainingMs;
-      if (extraMs > 0) {
-        await withActiveSession(workspace, async (openclawSession) => {
-          await openclawSession.extendTimeout(extraMs);
-        });
-      }
     }
 
     startSessionStep.success({
@@ -663,9 +707,9 @@ export async function readState(): Promise<OpenClawState> {
   return runtime.getState();
 }
 
-export async function createWorkspace(): Promise<OpenClawState> {
+export async function createWorkspace(progress?: OpenClawCreateProgress): Promise<OpenClawState> {
   const runtime = await getRuntime();
-  return runtime.createWorkspace();
+  return runtime.createWorkspace(progress);
 }
 
 export async function startSession(

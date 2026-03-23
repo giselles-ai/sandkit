@@ -47,6 +47,10 @@ type StatePayload = {
 type RunStartResponse = {
   runId: string;
 };
+
+type RunPayload = {
+  runId: string;
+};
 function formatDuration(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -124,6 +128,18 @@ function describeProgressMessage(
     return "OpenClaw is ready.";
   }
 
+  if (step === "prepare_workspace") {
+    return "Preparing workspace...";
+  }
+
+  if (step === "durable_bootstrap") {
+    return "Installing bootstrap artifacts durably...";
+  }
+
+  if (step === "verify_bootstrap") {
+    return "Verifying bootstrap installation...";
+  }
+
   if (step === "resolve_start_attempt") {
     return "Preparing start attempt...";
   }
@@ -169,19 +185,21 @@ async function fetchRunStatus(runId: string): Promise<RunRouteResponse | null> {
   };
 }
 
-async function callAction(payload: Record<string, unknown>) {
+type ApiActionResponse = StatePayload | RunPayload | { error: string };
+
+async function callAction(payload: Record<string, unknown>): Promise<ApiActionResponse> {
   const response = await fetch("/api/openclaw", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-  const next = (await response.json()) as StatePayload;
-  if (!response.ok || next.error) {
-    throw new Error(next.error ?? "Action failed.");
+  const next = (await response.json()) as ApiActionResponse;
+  if (!response.ok || "error" in next) {
+    throw new Error("error" in next ? next.error : "Action failed.");
   }
 
-  return next.state;
+  return next;
 }
 
 async function startWorkflow(): Promise<string> {
@@ -197,6 +215,17 @@ async function startWorkflow(): Promise<string> {
   }
 
   return payload.runId;
+}
+
+async function startCreateWorkspaceWorkflow(): Promise<string> {
+  const payload = await callAction({
+    action: "createWorkspace",
+  });
+  if ("runId" in payload) {
+    return payload.runId;
+  }
+
+  throw new Error("createWorkspace did not return a run handle.");
 }
 
 async function streamRunEvents(
@@ -455,10 +484,7 @@ export default function Page() {
     }
   }, [activeRun?.status, stopRunStream]);
 
-  async function runAction(
-    action: "createWorkspace" | "extendSession" | "commitSession",
-    durationMs?: number,
-  ) {
+  async function runAction(action: "extendSession" | "commitSession", durationMs?: number) {
     if (busy) {
       return;
     }
@@ -466,14 +492,54 @@ export default function Page() {
     setBusy(action);
     setError(null);
     try {
-      const nextState = await callAction({
+      const response = await callAction({
         action,
         ...(durationMs === undefined ? {} : { durationMs }),
       });
-      setState(nextState);
+      if ("state" in response) {
+        setState(response.state);
+      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Action failed.");
       await refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createWorkspace() {
+    if (busy) {
+      return;
+    }
+
+    setBusy("createWorkspace");
+    setError(null);
+    stopAllRunStream();
+    try {
+      const runId = await startCreateWorkspaceWorkflow();
+      setActiveRun({
+        runId,
+        status: "running",
+        lastIndex: 0,
+        display: {
+          lastMessage: "createWorkspace request accepted",
+        },
+      });
+      activeRunRef.current = {
+        runId,
+        status: "running",
+        lastIndex: 0,
+        display: {
+          lastMessage: "createWorkspace request accepted",
+        },
+      };
+      await refresh();
+      await startStream(runId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Create workspace action failed.");
+      await refresh();
+      setActiveRun(null);
+      activeRunRef.current = null;
     } finally {
       setBusy(null);
     }
@@ -550,12 +616,15 @@ export default function Page() {
             Workspace is not created yet. This runs durable bootstrap in `runCommand` and installs
             OpenClaw into Vercel Sandbox.
           </p>
+          {activeRun?.display.lastMessage ? (
+            <p className="status">{activeRun.display.lastMessage}</p>
+          ) : null}
           <div className="row">
             <button
               className="button primary"
               type="button"
               disabled={busy === "createWorkspace"}
-              onClick={() => void runAction("createWorkspace")}
+              onClick={() => void createWorkspace()}
             >
               {busy === "createWorkspace" ? "Creating workspace..." : "Create Workspace"}
             </button>

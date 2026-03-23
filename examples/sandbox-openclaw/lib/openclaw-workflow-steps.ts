@@ -3,7 +3,15 @@ export type OpenClawWorkflowStartInput = {
   requestedAt: string;
 };
 
-export type OpenClawRunStep = "resolve_start_attempt" | "ensure_gateway_running" | "public_ready";
+export type OpenClawWorkflowCreateInput = {
+  requestedAt: string;
+};
+
+export type OpenClawStartStep = "resolve_start_attempt" | "ensure_gateway_running" | "public_ready";
+
+export type OpenClawCreateStep = "prepare_workspace" | "durable_bootstrap" | "verify_bootstrap";
+
+export type OpenClawRunStep = OpenClawStartStep | OpenClawCreateStep;
 
 export type OpenClawRunPhase = "session_started" | "server_started" | "ready";
 
@@ -30,9 +38,11 @@ export type OpenClawRunEvent =
       type: "result";
       ts: string;
       finalOutput: {
+        kind?: "createWorkspace" | "startSession";
         openclawSessionId?: string;
         sandboxId?: string;
         openclawUrl?: string;
+        workspaceId?: string;
       };
     }
   | {
@@ -45,9 +55,15 @@ export type OpenClawRunEvent =
     };
 
 export type OpenClawStartFinalOutput = {
+  kind: "startSession";
   openclawSessionId?: string;
   sandboxId?: string;
   openclawUrl?: string;
+};
+
+export type OpenClawCreateFinalOutput = {
+  kind: "createWorkspace";
+  workspaceId?: string;
 };
 
 export function createOpenClawRunEvent(
@@ -80,6 +96,14 @@ export function deriveRunDisplayState(events: OpenClawRunEvent[]): OpenClawDispl
     }
 
     if (event.type === "result") {
+      if (event.finalOutput.kind === "createWorkspace") {
+        return {
+          phase: undefined,
+          step: undefined,
+          lastMessage: "workspace created",
+        };
+      }
+
       return {
         phase: "ready",
         step: undefined,
