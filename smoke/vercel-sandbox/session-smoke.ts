@@ -1,5 +1,5 @@
-import { createMemoryAdapter } from "sandkit/adapters/memory";
 import { sandkit } from "sandkit";
+import { createMemoryAdapter } from "sandkit/adapters/memory";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {
@@ -154,10 +154,11 @@ async function runPublicSessionSmoke(app: ReturnType<typeof sandkit>): Promise<v
   if (replay.exitCode !== 0 || replay.stdout.trim() !== "session") {
     throw new Error("Smoke failed: expected durable replay after session commit.");
   }
-
 }
 
-async function runStateRecoverySmoke(adapter: ReturnType<typeof createMemoryAdapter>): Promise<void> {
+async function runStateRecoverySmoke(
+  adapter: ReturnType<typeof createMemoryAdapter>,
+): Promise<void> {
   const app = sandkit({ database: adapter });
 
   const workspaceWithNonAttachable = await app.createWorkspace({

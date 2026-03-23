@@ -41,12 +41,12 @@ The public model intentionally hides lifecycle mechanics.
 
 This project keeps the public model small by separating ownership and live execution semantics.
 
-| Concept | Ownership | Durability | Public API role | Typical use |
-|---|---|---|---|---|
-| `workspace` | owns durable state | persisted across reload and restart | stable handle owner (`getWorkspace`, `setPolicy`) | policy updates, workspace retrieval |
-| `workspace.sandbox` | lazy boundary only | no owned durable state | entry point (`runCommand`, `openSession`, `attachSession`, `getActiveLease`) | call routing and state-machine resolution |
-| `session` | ephemeral lease | active runtime state only | explicit live object (`exec`, `startProcess`, `url`, `commit`, `extendTimeout`) | running interactive process and obtaining public routes |
-| `policy` | durable default on workspace, override per command | workspace default is stored durably; run snapshots store a redacted effective-policy record only | durable via `setPolicy`, temporary via `runCommand({ policy })` | network boundary configuration |
+| Concept             | Ownership                                          | Durability                                                                                       | Public API role                                                                 | Typical use                                             |
+| ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `workspace`         | owns durable state                                 | persisted across reload and restart                                                              | stable handle owner (`getWorkspace`, `setPolicy`)                               | policy updates, workspace retrieval                     |
+| `workspace.sandbox` | lazy boundary only                                 | no owned durable state                                                                           | entry point (`runCommand`, `openSession`, `attachSession`, `getActiveLease`)    | call routing and state-machine resolution               |
+| `session`           | ephemeral lease                                    | active runtime state only                                                                        | explicit live object (`exec`, `startProcess`, `url`, `commit`, `extendTimeout`) | running interactive process and obtaining public routes |
+| `policy`            | durable default on workspace, override per command | workspace default is stored durably; run snapshots store a redacted effective-policy record only | durable via `setPolicy`, temporary via `runCommand({ policy })`                 | network boundary configuration                          |
 
 ## State Set
 
@@ -194,19 +194,19 @@ flowchart TD
 
 ## What Sandkit Can Do Now
 
-| Area | API | Can be done | Notes |
-|---|---|---|---|
-| Durable command execution | `workspace.sandbox.runCommand(...)` | Yes | one-command durable unit, state persisted automatically; unavailable while an active session lease exists |
-| One-shot policy override | `runCommand({ policy })` | Yes | per-run override only |
-| Durable policy updates | `workspace.setPolicy(...)` | Yes | persisted on workspace record |
-| Live session start | `workspace.sandbox.openSession()` | Yes | requires no active attachable session; session is an exclusive live path |
-| Live session attach | `workspace.sandbox.attachSession()` | Yes | reattaches to an existing attachable lease only; does not refresh lease timing by itself |
-| Lease introspection | `workspace.sandbox.getActiveLease()` | Yes | includes sandbox id and expiry, null when detached |
-| Session command execution | `session.exec(...)` | Yes | live path, separate from `runCommand` |
-| Background process | `session.startProcess(...)` | Yes | interactive workloads |
-| Route discovery | `session.url(port)` | Yes | provider-backed public route lookup; port readiness and public route availability are not always the same |
-| Session timeout | `session.extendTimeout(durationMs)` | Yes | lease-extension path for live sessions |
-| Session commit | `session.commit()` | Yes | transitions to durable snapshot state |
+| Area                      | API                                  | Can be done | Notes                                                                                                     |
+| ------------------------- | ------------------------------------ | ----------- | --------------------------------------------------------------------------------------------------------- |
+| Durable command execution | `workspace.sandbox.runCommand(...)`  | Yes         | one-command durable unit, state persisted automatically; unavailable while an active session lease exists |
+| One-shot policy override  | `runCommand({ policy })`             | Yes         | per-run override only                                                                                     |
+| Durable policy updates    | `workspace.setPolicy(...)`           | Yes         | persisted on workspace record                                                                             |
+| Live session start        | `workspace.sandbox.openSession()`    | Yes         | requires no active attachable session; session is an exclusive live path                                  |
+| Live session attach       | `workspace.sandbox.attachSession()`  | Yes         | reattaches to an existing attachable lease only; does not refresh lease timing by itself                  |
+| Lease introspection       | `workspace.sandbox.getActiveLease()` | Yes         | includes sandbox id and expiry, null when detached                                                        |
+| Session command execution | `session.exec(...)`                  | Yes         | live path, separate from `runCommand`                                                                     |
+| Background process        | `session.startProcess(...)`          | Yes         | interactive workloads                                                                                     |
+| Route discovery           | `session.url(port)`                  | Yes         | provider-backed public route lookup; port readiness and public route availability are not always the same |
+| Session timeout           | `session.extendTimeout(durationMs)`  | Yes         | lease-extension path for live sessions                                                                    |
+| Session commit            | `session.commit()`                   | Yes         | transitions to durable snapshot state                                                                     |
 
 ## Non-Goals
 

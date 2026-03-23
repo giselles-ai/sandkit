@@ -1,11 +1,6 @@
 import { Database } from "bun:sqlite";
 
-import {
-  allowAll,
-  allowService,
-  codex,
-  sandkit,
-} from "sandkit";
+import { allowAll, allowService, codex, sandkit } from "sandkit";
 import { createBunSqliteAdapter } from "sandkit/adapters/sqlite-bun";
 import { createVercelSandboxDriverFactory } from "sandkit/integrations/vercel";
 

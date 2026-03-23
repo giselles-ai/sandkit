@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import { pathToFileURL } from "node:url";
 
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { drizzleAdapter } from "sandkit/adapters/drizzle";
 import { sandkit } from "sandkit";
+import { drizzleAdapter } from "sandkit/adapters/drizzle";
 
 const SQLITE_PATH = process.env.SMOKE_DRIZZLE_SAMPLE_DB_PATH ?? "./smoke-drizzle-workspaces.sqlite";
 const SCHEMA_PATH = "./generated/sandkit-schema.generated.ts";

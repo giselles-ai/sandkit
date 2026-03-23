@@ -3,12 +3,10 @@ import { rm } from "node:fs/promises";
 
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import {
-  allowAll,
-  sandkit,
-} from "sandkit";
+import { allowAll, sandkit } from "sandkit";
 import { drizzleAdapter } from "sandkit/adapters/drizzle";
 import { createMemoryAdapter } from "sandkit/adapters/memory";
+
 import {
   type InternalRunAdapterContract,
   type InternalSandkitAdapterContract,
