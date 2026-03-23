@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1774102290421,
-      "tag": "0000_shiny_katie_power",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1774104967654,
-      "tag": "0001_minor_green_goblin",
+      "when": 1774271601603,
+      "tag": "0000_quiet_blacklash",
       "breakpoints": true
     }
   ]

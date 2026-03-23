@@ -9,7 +9,13 @@ import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 
-import { openclawSessions, sandkitPolicies, sandkitRuns, sandkitWorkspaces } from "../db/schema";
+import {
+  openclawSessions,
+  sandkitPolicies,
+  sandkitRuns,
+  sandkitSetupStates,
+  sandkitWorkspaces,
+} from "../db/schema";
 import { createOpenClawStore, type OpenClawStore } from "./openclaw-store";
 
 const DEFAULT_AI_GATEWAY = "https://ai-gateway.vercel.sh/v1";
@@ -127,6 +133,7 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
       sandkitRuns,
       sandkitPolicies,
       openclawSessions,
+      sandkitSetupStates,
     },
   });
 
