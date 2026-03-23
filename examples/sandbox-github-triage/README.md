@@ -1,59 +1,59 @@
 # sandbox-github-triage
 
-SaaS 向けの GitHub PR / Issue triage の durable ワークフロー例です。`sandbox-github-triage` は以下を示します。
+This is a durable workflow example for SaaS-style GitHub PR / Issue triage. `sandbox-github-triage` demonstrates:
 
-- WebUI からトラッキング対象 repo を登録し、run 作成と実行を行う最小のアプリ形。
-- `workspace.sandbox.runCommand(...)` を主役にした 4 ステップ durable ワークフロー:
+- A minimal app shape where you register tracked repositories from a web UI, then create and run triage runs.
+- A four-step durable workflow centered on `workspace.sandbox.runCommand(...)`:
   - `sync-repo`
   - `collect-context`
   - `analyze`
   - `render-report`
-- repo ごとに 1 つの workspace を持ち、実行ごとにその workspace を再利用するアーキテクチャ。
-- app 側 DB と Sandkit workspace state の両方を保持し、実行の履歴と成果物を継続管理する。
-- `allowServices([github(), codex()])` を既定ポリシーに置き、GitHub 取得・LLM 解析の境界を明示。
+- One workspace per repository, reused across repeated triage runs.
+- An architecture that keeps both app-side DB state and Sandkit workspace state so run history and generated artifacts accumulate over time.
+- A default policy of `allowServices([github(), codex()])`, making the boundary between GitHub retrieval and LLM analysis explicit.
 
-## データモデル
+## Data Model
 
 - `triage_repositories`
   - `id`, `workspace_id`, `slug`, `default_branch`, `last_synced_at`
 - `triage_runs`
-  - 対象 repo、subject、状態、生成レポート情報を保存
+  - Stores the target repository, subject, status, and generated report information
 - `triage_steps`
-  - `run` の各ステップ実行結果（exitCode, stdout/stderr, artifact）を保存
+  - Stores the result of each step in a run (`exitCode`, `stdout` / `stderr`, and artifact path)
 
-## レビュー向けレポート
+## Reviewable Report
 
-`/triage/<run-id>` では最終レポートを以下の構造でレビューできます。
+`/triage/<run-id>` presents the final report in a reviewable structure:
 
-- short summary（要約）
-- reproducibility checklist（再現手順候補）
-- label candidates（ラベル候補）
-- priority candidates（優先度候補）
-- assignee candidates（担当者候補）
-- verification suggestions（検証提案）
+- short summary
+- reproducibility checklist
+- label candidates
+- priority candidates
+- assignee candidates
+- verification suggestions
 
-## アーティファクト（workspace 配下）
+## Artifacts Inside the Workspace
 
-`runCommand()` はすべて `/vercel/sandbox/home/triage/...` 配下へ成果物を保存します。
+Every `runCommand()` step writes durable artifacts under `/vercel/sandbox/home/triage/...`.
 
-- `triage/repositories/<owner_repo>/`…リポジトリ clone
-- `triage/artifacts/<run-id>/context.json`…取得した issue/PR context
-- `triage/artifacts/<run-id>/analysis.json`…AI 解析の入力/出力
-- `triage/artifacts/<run-id>/report.md`…最終レポート（Markdown）
+- `triage/repositories/<owner_repo>/`: cloned repository
+- `triage/artifacts/<run-id>/context.json`: collected issue / PR context
+- `triage/artifacts/<run-id>/analysis.json`: analysis input / output
+- `triage/artifacts/<run-id>/report.md`: final Markdown report
 
-この例の詳細画面では主要アーティファクト（`context.json` / `analysis.json` / `report.md`）の path を明示し、調査時に必要な資料への導線を残しています。
+The run detail page calls out the main artifact paths (`context.json`, `analysis.json`, and `report.md`) so the user can inspect the underlying materials during follow-up investigation.
 
-## OpenClaw 例との違い
+## How It Differs from the OpenClaw Example
 
-`examples/sandbox-openclaw` が live session（`openSession()`）を使って常駐プロセスを扱うサンプルであるのに対し、本例は
+Unlike `examples/sandbox-openclaw`, which uses a live session (`openSession()`) for a long-running process, this example:
 
-- `runCommand()` を中心に**セッション不要**で実行を分割
-- 各ステップ単位で結果を durable 化
-- workspace を再利用して「履歴」と「資料」を蓄積
+- splits execution into session-free `runCommand()` steps
+- makes each step durable as an independent unit of work
+- reuses the workspace so history and supporting materials accumulate
 
-という durable-first の SaaS運用フローを示します。
+It is meant to show a durable-first SaaS operations workflow rather than a live control plane.
 
-## セットアップ
+## Setup
 
 ```bash
 cd packages/sandkit
@@ -66,12 +66,12 @@ bun run db:generate
 bun run dev
 ```
 
-## 環境変数
+## Environment Variables
 
-- `GITHUB_TOKEN`（optional）: GitHub API 呼び出し向け
-- `CODEX_API_KEY`（optional）: 分析 step で Codex を使う場合
-- `AI_GATEWAY_BASE_URL`（optional）: 既定は `https://api.openai.com/v1`
-- `CODEX_MODEL`（optional）: 分析 step のモデル名。既定は `gpt-4o-mini`（CI 環境では `gpt-5-mini`）
-- `TRIAGE_CODEX_MODEL`（optional）: `CODEX_MODEL` の別名
-- `SANDBOX_RUNTIME`（optional）: 既定 `node24`
-- `SANDBOX_TIMEOUT_MS`（optional）
+- `GITHUB_TOKEN` (optional): used for GitHub API calls
+- `CODEX_API_KEY` (optional): used when the analyze step calls Codex
+- `AI_GATEWAY_BASE_URL` (optional): defaults to `https://api.openai.com/v1`
+- `CODEX_MODEL` (optional): model name for the analyze step; defaults to `gpt-4o-mini` and `gpt-5-mini` in CI
+- `TRIAGE_CODEX_MODEL` (optional): alias for `CODEX_MODEL`
+- `SANDBOX_RUNTIME` (optional): defaults to `node24`
+- `SANDBOX_TIMEOUT_MS` (optional)
