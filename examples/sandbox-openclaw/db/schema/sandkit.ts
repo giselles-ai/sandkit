@@ -1,6 +1,6 @@
 // This file is generated from Sandkit schema model.
 // Provider: sqlite
-// Version: 2
+// Version: 4
 
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
@@ -44,8 +44,16 @@ export const sandkitPolicies = sqliteTable("sandkit_policies", {
   created_at: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const sandkitSetupStates = sqliteTable("sandkit_setup_states", {
+  id: text("id").notNull().primaryKey(),
+  state: text("state", { mode: "json" }).notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const sandkitSchema = {
   sandkitWorkspaces,
   sandkitRuns,
   sandkitPolicies,
+  sandkitSetupStates,
 };
