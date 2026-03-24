@@ -29,6 +29,17 @@ function resolveCredentialValue(serviceId: string, header: PolicyServiceHeaderTr
   );
 }
 
+function encodeHeaderValue(
+  value: string,
+  encoding: PolicyServiceHeaderTransform["valueEncoding"],
+): string {
+  if (encoding === "base64") {
+    return Buffer.from(value, "utf8").toString("base64");
+  }
+
+  return value;
+}
+
 function compileHeaderRules(
   serviceId: string,
   headers: readonly PolicyServiceHeaderTransform[] | undefined,
@@ -40,7 +51,10 @@ function compileHeaderRules(
   const resolvedHeaders = Object.fromEntries(
     headers.map((header) => [
       header.headerName,
-      `${header.valuePrefix ?? ""}${resolveCredentialValue(serviceId, header)}`,
+      `${header.valuePrefix ?? ""}${encodeHeaderValue(
+        `${header.credentialPrefix ?? ""}${resolveCredentialValue(serviceId, header)}`,
+        header.valueEncoding,
+      )}`,
     ]),
   );
 
@@ -65,8 +79,11 @@ export function compileVercelNetworkPolicy(policy: WorkspacePolicy): VercelNetwo
       const allow: Record<string, VercelNetworkPolicyRule[]> = {};
 
       for (const service of policy.services) {
-        const rules = compileHeaderRules(service.id, service.headers);
         for (const domain of service.domains) {
+          const rules = compileHeaderRules(
+            service.id,
+            service.domainHeaders?.[domain] ?? service.headers,
+          );
           const existing = allow[domain] ?? [];
           allow[domain] = [...existing, ...rules];
         }

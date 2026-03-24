@@ -137,7 +137,10 @@ If you do not pass `database`, Sandkit defaults to the in-memory adapter. That d
 
 - `codex()` reads `CODEX_API_KEY`
 - `gemini()` reads `GEMINI_API_KEY`
-- `github()` reads `GITHUB_TOKEN`
+- `github()` reads `GITHUB_TOKEN` and maps it through Vercel Sandbox firewall transforms:
+  - `Authorization: Basic <base64(x-access-token:<token>)>` on requests to `github.com`, intended for Git-over-HTTPS operations
+  - `Authorization: Bearer <token>` on requests to `api.github.com`
+  - no Authorization header for `*.githubusercontent.com`
 - `aiGateway()` reads `AI_GATEWAY_API_KEY` from host env and allows the hostname (plus wildcard) from `AI_GATEWAY_BASE_URL`.
   `AI_GATEWAY_BASE_URL` ports are ignored for allow-listing; only host/domain matches are used.
 

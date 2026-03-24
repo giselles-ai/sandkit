@@ -103,7 +103,10 @@ Service presets read default credentials from the environment when the policy is
 
 - `codex()` reads `CODEX_API_KEY`
 - `gemini()` reads `GEMINI_API_KEY`
-- `github()` reads `GITHUB_TOKEN`
+- `github()` reads `GITHUB_TOKEN` and maps it through Vercel Sandbox firewall transforms:
+  - `Authorization: Basic <base64(x-access-token:<token>)>` on requests to `github.com`, intended for Git-over-HTTPS operations
+  - `Authorization: Bearer <token>` on requests to `api.github.com`
+  - no Authorization header for `*.githubusercontent.com`
 
 For one-off overrides, pass the secret only on that run:
 
