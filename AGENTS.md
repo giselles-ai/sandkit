@@ -4,6 +4,8 @@
 
 At the start of each thread, check the ghost first.
 
+If the user's prompt includes a GitHub URL, retrieve the referenced issue, pull request, commit, or repository context with `gh` CLI before acting on it.
+
 ## Ghost
 
 A ghost is not a generic summary.
