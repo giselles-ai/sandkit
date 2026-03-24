@@ -28,7 +28,9 @@ function expectAuthorizationHeader(
 ) {
   const header = readAuthorizationHeader(policy, domain);
   if (header !== expected) {
-    throw new Error(`Smoke failed: expected ${domain} authorization header "${expected}", got "${header}"`);
+    throw new Error(
+      `Smoke failed: expected ${domain} authorization header "${expected}", got "${header}"`,
+    );
   }
 }
 
@@ -83,7 +85,11 @@ async function runSmoke(): Promise<void> {
   }
 
   const githubEnvCompiled = compileVercelNetworkPolicy(github());
-  expectAuthorizationHeader(githubEnvCompiled, "github.com", toBasicAuth("x-access-token", "env-secret"));
+  expectAuthorizationHeader(
+    githubEnvCompiled,
+    "github.com",
+    toBasicAuth("x-access-token", "env-secret"),
+  );
   expectAuthorizationHeader(githubEnvCompiled, "api.github.com", "Bearer env-secret");
   expectNoAuthorizationHeader(githubEnvCompiled, "*.githubusercontent.com");
 

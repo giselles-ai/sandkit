@@ -29,7 +29,10 @@ function resolveCredentialValue(serviceId: string, header: PolicyServiceHeaderTr
   );
 }
 
-function encodeHeaderValue(value: string, encoding: PolicyServiceHeaderTransform["valueEncoding"]): string {
+function encodeHeaderValue(
+  value: string,
+  encoding: PolicyServiceHeaderTransform["valueEncoding"],
+): string {
   if (encoding === "base64") {
     return Buffer.from(value, "utf8").toString("base64");
   }
