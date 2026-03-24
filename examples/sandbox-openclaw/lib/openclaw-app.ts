@@ -9,13 +9,7 @@ import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 
-import {
-  openclawSessions,
-  sandkitPolicies,
-  sandkitRuns,
-  sandkitSetupStates,
-  sandkitWorkspaces,
-} from "../db/schema";
+import { schema } from "../db/schema";
 import { createOpenClawStore, type OpenClawStore } from "./openclaw-store";
 
 export const AI_GATEWAY_API_URL = "https://ai-gateway.vercel.sh/v1";
@@ -75,15 +69,7 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
     url: `file:${dbPath}`,
   });
 
-  const db = drizzle(sqlite, {
-    schema: {
-      sandkitWorkspaces,
-      sandkitRuns,
-      sandkitPolicies,
-      openclawSessions,
-      sandkitSetupStates,
-    },
-  });
+  const db = drizzle(sqlite, { schema });
 
   const adapter = drizzleAdapter(db, {
     provider: "sqlite",

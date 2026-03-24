@@ -1,7 +1,8 @@
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 
-import { openclawSessions, sandkitWorkspaces } from "../db/schema";
+import { openclawSessions } from "../db/schema/openclaw";
+import { sandkitWorkspaces } from "../db/schema/sandkit";
 
 const OPENCLAW_SESSION_SCHEMA_VERSION = 1;
 
