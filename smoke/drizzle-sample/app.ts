@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { pathToFileURL } from "node:url";
 
-import { sandkit } from "@giselles-ai/sandkit";
+import { createSandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
 import { drizzle } from "drizzle-orm/bun-sqlite";
@@ -19,17 +19,17 @@ async function run(): Promise<void> {
   }
 
   const drizzleDb = drizzle(db, { schema });
-  const app = sandkit({
+  const sandkit = createSandkit({
     database: drizzleAdapter(drizzleDb, {
       provider: "sqlite",
     }),
     sandbox: mockSandbox(),
   });
 
-  const created = await app.createWorkspace({
+  const created = await sandkit.createWorkspace({
     name: "smoke-drizzle-sample",
   });
-  const reloaded = await app.getWorkspace(created.id);
+  const reloaded = await sandkit.getWorkspace(created.id);
   console.log(`workspace=${reloaded.id} name=${reloaded.descriptor.name}`);
   db.close();
 }

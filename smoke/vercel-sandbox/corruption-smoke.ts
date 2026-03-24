@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { allowAll, sandkit } from "@giselles-ai/sandkit";
+import { allowAll, createSandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { internalSandboxProvider, mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
@@ -230,7 +230,7 @@ async function runWorkspaceMetadataCorruptionScenario(): Promise<void> {
       .run("workspace_corrupt_metadata", "{", null, "active", "corrupt", null, now, now);
 
     const db = drizzle(sqlite, { schema });
-    const app = sandkit({
+    const sandkit = createSandkit({
       database: drizzleAdapter(db, {
         provider: "sqlite",
       }),
@@ -239,7 +239,7 @@ async function runWorkspaceMetadataCorruptionScenario(): Promise<void> {
 
     await expectErrorContaining(
       "workspace metadata corruption",
-      () => app.getWorkspace("workspace_corrupt_metadata"),
+      () => sandkit.getWorkspace("workspace_corrupt_metadata"),
       ["Sandkit durable state corruption", "sandkit_workspaces.metadata"],
     );
   } finally {
@@ -262,11 +262,11 @@ async function runRunArgsCorruptionScenario(corruptedArgs: string, label: string
     const adapter = createCorruptingAdapter(baseAdapter, (runId) => {
       sqlite.query("UPDATE sandkit_runs SET args = ? WHERE id = ?").run(corruptedArgs, runId);
     });
-    const app = sandkit({
+    const sandkit = createSandkit({
       database: adapter,
       sandbox: mockSandbox(),
     });
-    const workspace = await app.createWorkspace({ name: label });
+    const workspace = await sandkit.createWorkspace({ name: label });
 
     await expectErrorContaining(label, () => workspace.sandbox.runCommand("echo", ["hello"]), [
       "Sandkit durable state corruption",
@@ -292,11 +292,11 @@ async function runProviderCommitCorruptionScenario(): Promise<void> {
     const adapter = createCorruptingAdapter(baseAdapter, (runId) => {
       sqlite.query("UPDATE sandkit_runs SET provider_commit = ? WHERE id = ?").run("{", runId);
     });
-    const app = sandkit({
+    const sandkit = createSandkit({
       database: adapter,
       sandbox: mockSandbox(),
     });
-    const workspace = await app.createWorkspace({ name: "provider-commit-corruption" });
+    const workspace = await sandkit.createWorkspace({ name: "provider-commit-corruption" });
 
     await expectErrorContaining(
       "provider_commit corruption",
@@ -310,11 +310,14 @@ async function runProviderCommitCorruptionScenario(): Promise<void> {
 }
 
 async function runAggregateFailureScenario(): Promise<void> {
-  const app = sandkit({
+  const sandkit = createSandkit({
     database: createMemoryAdapter(),
     sandbox: internalSandboxProvider(createFailingDriverFactory(), "aggregate-failure"),
   });
-  const workspace = await app.createWorkspace({ name: "aggregate-failure", policy: allowAll() });
+  const workspace = await sandkit.createWorkspace({
+    name: "aggregate-failure",
+    policy: allowAll(),
+  });
 
   await expectAggregateError(
     "command + durability failure",

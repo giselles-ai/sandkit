@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { sandkit } from "@giselles-ai/sandkit";
+import { createSandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
 import { drizzle } from "drizzle-orm/bun-sqlite";
@@ -93,14 +93,14 @@ async function runSmoke(): Promise<void> {
     }
 
     const db = drizzle(sqlite, { schema });
-    const app = sandkit({
+    const sandkit = createSandkit({
       database: drizzleAdapter(db, {
         provider: "sqlite",
       }),
       sandbox: mockSandbox(),
     });
 
-    const workspace = await app.createWorkspace({ name: expectedName });
+    const workspace = await sandkit.createWorkspace({ name: expectedName });
     const writeResult = await workspace.sandbox.runCommand("echo", ["hello"]);
     if (writeResult.exitCode !== 0) {
       throw new Error("Smoke failed: expected successful command exit code 0");
@@ -112,14 +112,14 @@ async function runSmoke(): Promise<void> {
 
     replaySqlite = new Database(SQLITE_PATH);
     const replayDb = drizzle(replaySqlite, { schema });
-    const replayApp = sandkit({
+    const replaySandkit = createSandkit({
       database: drizzleAdapter(replayDb, {
         provider: "sqlite",
       }),
       sandbox: mockSandbox(),
     });
 
-    const reloaded = await replayApp.getWorkspace(workspace.id);
+    const reloaded = await replaySandkit.getWorkspace(workspace.id);
     if (reloaded.id !== workspace.id || reloaded.descriptor.name !== expectedName) {
       throw new Error("Smoke assertion failed: workspace could not be reloaded");
     }

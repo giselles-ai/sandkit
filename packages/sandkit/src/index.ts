@@ -1,4 +1,4 @@
-export { Sandkit, sandkit } from "./core/sandkit.ts";
+export { Sandkit, createSandkit } from "./core/sandkit.ts";
 export type { SandkitOptions, WorkspaceCreateOptions, SharedSetup } from "./types.ts";
 export type {
   PublicWorkspaceHandle,

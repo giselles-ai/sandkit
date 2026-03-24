@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { sandkit, allowService, codex, gemini, github } from "@giselles-ai/sandkit";
+import { createSandkit, allowService, codex, gemini, github } from "@giselles-ai/sandkit";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
 import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
@@ -93,21 +93,21 @@ async function runSmoke(): Promise<void> {
     'github(...) explicit override requires a non-empty "apiKey"',
   );
 
-  const app = sandkit({
+  const sandkit = createSandkit({
     database: createMemoryAdapter(),
     sandbox: mockSandbox(),
   });
   await expectFailure(
     "createWorkspace with explicit secret policy",
     () =>
-      app.createWorkspace({
+      sandkit.createWorkspace({
         name: "reject-secret-default",
         policy: allowService(codex({ apiKey: "top-secret" })),
       }),
     "cannot be stored durably",
   );
 
-  const workspace = await app.createWorkspace({ name: "reject-secret-set-policy" });
+  const workspace = await sandkit.createWorkspace({ name: "reject-secret-set-policy" });
   await expectFailure(
     "setPolicy with explicit secret policy",
     () => workspace.setPolicy(allowService(codex({ apiKey: "top-secret" }))),
@@ -119,11 +119,11 @@ async function runSmoke(): Promise<void> {
   const sqlite = new Database(sqlitePath);
 
   try {
-    const sqliteApp = sandkit({
+    const sqliteSandkit = createSandkit({
       database: createBunSqliteAdapter(sqlite),
       sandbox: mockSandbox(),
     });
-    const sqliteWorkspace = await sqliteApp.createWorkspace({ name: "redact-per-run-secret" });
+    const sqliteWorkspace = await sqliteSandkit.createWorkspace({ name: "redact-per-run-secret" });
 
     await sqliteWorkspace.sandbox.runCommand({
       command: "policy-id",

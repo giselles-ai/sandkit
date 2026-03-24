@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { allowAll, allowServices, codex, github } from "@giselles-ai/sandkit";
 import { type WorkspacePolicy } from "@giselles-ai/sandkit";
-import { sandkit, type PublicWorkspaceHandle } from "@giselles-ai/sandkit";
+import { createSandkit, type PublicWorkspaceHandle, type Sandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient, type Client } from "@libsql/client";
@@ -51,7 +51,7 @@ export type MergeReadinessRuntimeConfig = {
 };
 
 export type MergeReadinessRuntime = {
-  app: ReturnType<typeof sandkit>;
+  sandkit: Sandkit;
   store: MergeReadinessStore;
   config: MergeReadinessRuntimeConfig;
   resetWorkspaceSandboxState: (workspaceId: string) => Promise<void>;
@@ -138,7 +138,7 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
     provider: "sqlite",
   });
 
-  const app = sandkit({
+  const sandkit = createSandkit({
     database: adapter,
     setup: {
       command: "bash",
@@ -163,7 +163,7 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
   });
 
   return {
-    app,
+    sandkit,
     store: createMergeReadinessStore(db),
     config: {
       workspacePolicy: policyForMergeReadiness(),
@@ -201,13 +201,13 @@ export function summarizeWorkspaceId(raw: string): string {
 
 export async function getOrCreateWorkspaceById(
   id: string,
-  appHandle: MergeReadinessRuntime["app"],
+  sandkitHandle: MergeReadinessRuntime["sandkit"],
 ): Promise<PublicWorkspaceHandle> {
   try {
-    return await appHandle.getWorkspace(id);
+    return await sandkitHandle.getWorkspace(id);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith(`Workspace not found:`)) {
-      return await appHandle.createWorkspace({
+      return await sandkitHandle.createWorkspace({
         id,
         name: `merge-readiness-${id}`,
         policy: policyForMergeReadiness(),
