@@ -30,6 +30,8 @@ Design rules:
 Execution rules:
 - Follow existing repository patterns unless they conflict with `docs/coding-principles.md`.
 - Keep comments sparse and only for non-obvious logic.
+- For each coherent implementation task that changes files, run `bun fmt` and `bun lint` before handing work back.
+- If `bun fmt` or `bun lint` fails, fix the issue when it is within task scope; otherwise stop and report the blocker clearly.
 - Validate the changed behavior with the most relevant local command or test you can run in scope.
 - Report what changed, how you verified it, and any remaining gaps concisely.
 """
