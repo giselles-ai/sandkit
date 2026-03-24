@@ -10,8 +10,9 @@ import type {
   SandboxDriverFactory,
   WorkspaceRecord,
   WorkspacePolicy,
+  SandkitOptions,
 } from "../types.ts";
-import { sandkit } from "./sandkit.ts";
+import { Sandkit, createSandkit } from "./sandkit.ts";
 import { sharedSetupStateId } from "./workspace.ts";
 
 interface CaptureCall {
@@ -208,9 +209,9 @@ function createSetupRecoveryDriverFactory(): SandboxDriverFactory {
 }
 
 function createMockSandkit(
-  input: Omit<Parameters<typeof sandkit>[0], "sandbox"> = {},
-): ReturnType<typeof sandkit> {
-  return sandkit({
+  input: Omit<SandkitOptions, "sandbox"> = {},
+): Sandkit {
+  return createSandkit({
     ...input,
     sandbox: mockSandbox(),
   });
@@ -219,11 +220,11 @@ function createMockSandkit(
 describe("Workspace session policy lifecycle", () => {
   test("requires sandbox provider in construction options", async () => {
     expect(() => {
-      sandkit(undefined as unknown as Parameters<typeof sandkit>[0]);
+      createSandkit(undefined as unknown as SandkitOptions);
     }).toThrow("SandkitOptions is required");
 
     expect(() => {
-      sandkit({} as Parameters<typeof sandkit>[0]);
+      createSandkit({} as SandkitOptions);
     }).toThrow("SandkitOptions.sandbox is required. Set it to a Sandkit sandbox provider");
   });
 
@@ -243,8 +244,8 @@ describe("Workspace session policy lifecycle", () => {
       },
     ]);
 
-    const app = createMockSandkit();
-    const workspace = await app.createWorkspace({ policy: defaultPolicy });
+    const sandkit = createMockSandkit();
+    const workspace = await sandkit.createWorkspace({ policy: defaultPolicy });
     const session = await workspace.sandbox.openSession();
 
     const before = await session.exec("policy-id", []);
@@ -254,7 +255,7 @@ describe("Workspace session policy lifecycle", () => {
     const whileSetLive = await session.exec("policy-id", []);
     expect(whileSetLive.stdout.trim()).toBe("allow-services:live");
 
-    const reloadedWorkspace = await app.getWorkspace(workspace.id);
+    const reloadedWorkspace = await sandkit.getWorkspace(workspace.id);
     const reattachedSession = await reloadedWorkspace.sandbox.attachSession();
     const afterReattach = await reattachedSession.exec("policy-id", []);
     expect(afterReattach.stdout.trim()).toBe("allow-services:live");
@@ -262,11 +263,11 @@ describe("Workspace session policy lifecycle", () => {
 
   test("persists durable sandbox create options across create/resume", async () => {
     const { factory, createCalls, resumeCalls } = createWorkspaceCreateOptionRecorder();
-    const app = sandkit({
+    const sandkit = createSandkit({
       sandbox: internalSandboxProvider(factory, "vercel-test"),
     });
 
-    const workspace = await app.createWorkspace({
+    const workspace = await sandkit.createWorkspace({
       sandbox: {
         exposedPorts: [3000, 3001],
       },
@@ -279,7 +280,7 @@ describe("Workspace session policy lifecycle", () => {
     expect(createCalls[0].options.exposedPorts).toEqual([3000, 3001]);
     expect(createCalls[0].options.timeoutMs).toBeUndefined();
 
-    const reloadedWorkspace = await app.getWorkspace(workspace.id);
+    const reloadedWorkspace = await sandkit.getWorkspace(workspace.id);
     const secondRun = await reloadedWorkspace.sandbox.runCommand("cat", ["hello.txt"]);
     expect(secondRun.exitCode).toBe(0);
     expect(resumeCalls).toHaveLength(1);
@@ -288,11 +289,11 @@ describe("Workspace session policy lifecycle", () => {
 
   test("passes openSession timeoutMs override to create/restore options", async () => {
     const { factory, createCalls, resumeCalls } = createWorkspaceCreateOptionRecorder();
-    const app = sandkit({
+    const sandkit = createSandkit({
       sandbox: internalSandboxProvider(factory, "vercel-test"),
     });
 
-    const workspace = await app.createWorkspace({
+    const workspace = await sandkit.createWorkspace({
       sandbox: {
         exposedPorts: [8080],
       },
@@ -308,13 +309,13 @@ describe("Workspace session policy lifecycle", () => {
 
 describe("Workspace setup lifecycle", () => {
   test("runs setup before the first durable command and does not rerun it once state exists", async () => {
-    const app = createMockSandkit({
+    const sandkit = createMockSandkit({
       setup: {
         command: "echo",
         args: ["hello", ">", "hello.txt"],
       },
     });
-    const workspace = await app.createWorkspace({
+    const workspace = await sandkit.createWorkspace({
       id: "shared-setup-command",
     });
 
@@ -324,8 +325,8 @@ describe("Workspace setup lifecycle", () => {
     });
     expect(firstRead.exitCode).toBe(0);
     expect(firstRead.stdout.trim()).toBe("hello");
-    const recordedSetupState = await app.context.adapter.setupStates.getSetupState(
-      sharedSetupStateId(app.context.adapter.id, app.context.options.setup),
+    const recordedSetupState = await sandkit.context.adapter.setupStates.getSetupState(
+      sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup),
     );
     expect(recordedSetupState?.state).toBeDefined();
 
@@ -344,13 +345,13 @@ describe("Workspace setup lifecycle", () => {
   });
 
   test("runs setup before the first session and persists the successful setup state", async () => {
-    const app = createMockSandkit({
+    const sandkit = createMockSandkit({
       setup: {
         command: "echo",
         args: ["ready", ">", "hello.txt"],
       },
     });
-    const workspace = await app.createWorkspace();
+    const workspace = await sandkit.createWorkspace();
 
     const session = await workspace.sandbox.openSession();
     const sessionRead = await session.exec({
@@ -361,9 +362,9 @@ describe("Workspace setup lifecycle", () => {
     expect(sessionRead.stdout.trim()).toBe("ready");
     await session.commit();
 
-    const reloaded = await app.getWorkspace(workspace.id);
-    const loaded = await app.context.adapter.setupStates.getSetupState(
-      sharedSetupStateId(app.context.adapter.id, app.context.options.setup),
+    const reloaded = await sandkit.getWorkspace(workspace.id);
+    const loaded = await sandkit.context.adapter.setupStates.getSetupState(
+      sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup),
     );
     expect(loaded?.state).toBeDefined();
     const replay = await reloaded.sandbox.runCommand({
@@ -375,13 +376,13 @@ describe("Workspace setup lifecycle", () => {
   });
 
   test("does not persist setup state when setup command fails", async () => {
-    const app = createMockSandkit({
+    const sandkit = createMockSandkit({
       setup: {
         command: "unsupported",
       },
     });
-    const workspace = await app.createWorkspace();
-    const sharedStateId = sharedSetupStateId(app.context.adapter.id, app.context.options.setup);
+    const workspace = await sandkit.createWorkspace();
+    const sharedStateId = sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup);
 
     await expect(
       workspace.sandbox.runCommand({
@@ -390,7 +391,7 @@ describe("Workspace setup lifecycle", () => {
       }),
     ).rejects.toThrow(/Workspace setup failed with exit code 127/);
 
-    const intermediate = await app.context.adapter.setupStates.getSetupState(sharedStateId);
+    const intermediate = await sandkit.context.adapter.setupStates.getSetupState(sharedStateId);
     expect(intermediate).toBeNull();
 
     await expect(
@@ -400,27 +401,27 @@ describe("Workspace setup lifecycle", () => {
       }),
     ).rejects.toThrow(/Workspace setup failed with exit code 127/);
 
-    const afterRetry = await app.context.adapter.setupStates.getSetupState(sharedStateId);
+    const afterRetry = await sandkit.context.adapter.setupStates.getSetupState(sharedStateId);
     expect(afterRetry).toBeNull();
   });
 
   test("rebuilds stale setup state by rerunning setup", async () => {
-    const app = sandkit({
+    const sandkit = createSandkit({
       sandbox: internalSandboxProvider(createSetupRecoveryDriverFactory(), "setup-recovery-test"),
       setup: {
         command: "echo",
         args: ["bootstrapped", ">", "hello.txt"],
       },
     });
-    const workspace = await app.createWorkspace();
-    await app.context.adapter.setupStates.putSetupState({
-      id: sharedSetupStateId(app.context.adapter.id, app.context.options.setup),
+    const workspace = await sandkit.createWorkspace();
+    await sandkit.context.adapter.setupStates.putSetupState({
+      id: sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup),
       state: {
         kind: "stale-setup-recovery",
         sessionId: "stale-setup",
       },
     });
-    const observed = await app.getWorkspace(workspace.id);
+    const observed = await sandkit.getWorkspace(workspace.id);
 
     const result = await observed.sandbox.runCommand({
       command: "cat",
@@ -430,8 +431,8 @@ describe("Workspace setup lifecycle", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("bootstrapped");
 
-    const reloaded = await app.context.adapter.setupStates.getSetupState(
-      sharedSetupStateId(app.context.adapter.id, app.context.options.setup),
+    const reloaded = await sandkit.context.adapter.setupStates.getSetupState(
+      sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup),
     );
     expect(reloaded?.state.kind).toBe("setup-recovery-snapshot");
   });
@@ -506,14 +507,14 @@ describe("Workspace setup lifecycle", () => {
   });
 
   test("rejects explicit secret-bearing setup policy", async () => {
-    const app = createMockSandkit({
+    const sandkit = createMockSandkit({
       setup: {
         command: "echo",
         args: ["shared", ">", "hello.txt"],
         policy: allowServices([codex({ apiKey: "top-secret" })]),
       },
     });
-    const workspace = await app.createWorkspace();
+    const workspace = await sandkit.createWorkspace();
 
     await expect(
       workspace.sandbox.runCommand({

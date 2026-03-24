@@ -1,6 +1,7 @@
-import { sandkit } from "@giselles-ai/sandkit";
+import { createSandkit } from "@giselles-ai/sandkit";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
+import type { Sandkit } from "@giselles-ai/sandkit";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {
@@ -19,8 +20,8 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runPublicSessionSmoke(app: ReturnType<typeof sandkit>): Promise<void> {
-  const workspace = await app.createWorkspace({ name: "session-smoke" });
+async function runPublicSessionSmoke(sandkit: Sandkit): Promise<void> {
+  const workspace = await sandkit.createWorkspace({ name: "session-smoke" });
   const noLease = await workspace.sandbox.getActiveLease();
   if (noLease !== null) {
     throw new Error("Smoke failed: expected no active lease on fresh workspace.");
@@ -160,12 +161,12 @@ async function runPublicSessionSmoke(app: ReturnType<typeof sandkit>): Promise<v
 async function runStateRecoverySmoke(
   adapter: ReturnType<typeof createMemoryAdapter>,
 ): Promise<void> {
-  const app = sandkit({
+  const sandkit = createSandkit({
     database: adapter,
     sandbox: mockSandbox(),
   });
 
-  const workspaceWithNonAttachable = await app.createWorkspace({
+  const workspaceWithNonAttachable = await sandkit.createWorkspace({
     name: "session-non-attachable-smoke",
   });
   await adapter.workspaces.updateWorkspace(workspaceWithNonAttachable.id, {
@@ -188,7 +189,7 @@ async function runStateRecoverySmoke(
     throw new Error("Smoke failed: expected legacy non-attachable state to clear for runCommand.");
   }
 
-  const expiredSessionWorkspace = await app.createWorkspace({
+  const expiredSessionWorkspace = await sandkit.createWorkspace({
     name: "session-expired-clear-smoke",
   });
   const observedAt = new Date(Date.now() - 90_000).toISOString();
@@ -220,18 +221,18 @@ async function runStateRecoverySmoke(
 
 async function runSmoke(): Promise<void> {
   const adapter = createMemoryAdapter();
-  const app = sandkit({
+  const sandkit = createSandkit({
     database: adapter,
     sandbox: mockSandbox(),
   });
 
-  await runPublicSessionSmoke(app);
+  await runPublicSessionSmoke(sandkit);
   // Internal-state seam checks intentionally remain explicit here:
   // mutate the raw persisted metadata via adapter interface and assert recovery behavior.
   await runStateRecoverySmoke(adapter);
 
-  // Keep one public-app smoke path visible and ensure the app remains usable after boundary checks.
-  const postStateWorkspace = await app.createWorkspace({
+  // Keep one public Sandkit smoke path visible and ensure the runtime remains usable after boundary checks.
+  const postStateWorkspace = await sandkit.createWorkspace({
     name: "session-post-state-smoke",
   });
   await postStateWorkspace.sandbox.runCommand("echo", ["ok"]);

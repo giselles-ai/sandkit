@@ -3,11 +3,12 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { sandkit } from "@giselles-ai/sandkit";
+import { createSandkit } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
+import type { Sandkit } from "@giselles-ai/sandkit";
 
 import { schema } from "../db/schema";
 import { createOpenClawStore, type OpenClawStore } from "./openclaw-store";
@@ -43,7 +44,7 @@ export type OpenClawRuntimeConfig = {
 };
 
 export type OpenClawRuntime = {
-  app: ReturnType<typeof sandkit>;
+  sandkit: Sandkit;
   store: OpenClawStore;
   config: OpenClawRuntimeConfig;
 };
@@ -75,7 +76,7 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
     provider: "sqlite",
   });
 
-  const app = sandkit({
+  const sandkit = createSandkit({
     database: adapter,
     sandbox: vercelSandbox({
       runtime: "node24",
@@ -84,7 +85,7 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
   });
 
   return {
-    app,
+    sandkit,
     store: createOpenClawStore(db),
     config: {
       workspaceId: WORKSPACE_ID,

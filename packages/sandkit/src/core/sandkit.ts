@@ -57,6 +57,6 @@ export class Sandkit {
   }
 }
 
-export function sandkit(options: SandkitOptions): Sandkit {
+export function createSandkit(options: SandkitOptions): Sandkit {
   return new Sandkit(options);
 }

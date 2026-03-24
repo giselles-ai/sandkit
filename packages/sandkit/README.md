@@ -58,24 +58,27 @@ npm install @giselles-ai/sandkit drizzle-orm
 
 ## Quick Start
 
+> Migration note: `sandkit(...)` was renamed to `createSandkit(...)` and this package is not yet aliased.
+Callers must update imports and call sites from `sandkit` to `createSandkit`.
+
 ```ts
 import { Database } from "bun:sqlite";
 
-import { sandkit } from "@giselles-ai/sandkit";
+import { createSandkit } from "@giselles-ai/sandkit";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 
 const database = new Database("./sandkit.sqlite");
 const workspaceAdapter = createBunSqliteAdapter(database);
 
-const app = sandkit({
+const sandkit = createSandkit({
   database: workspaceAdapter,
   sandbox: vercelSandbox({
     defaultTimeout: 60_000,
   }),
 });
 
-const workspace = await app.createWorkspace({
+const workspace = await sandkit.createWorkspace({
   name: "hello-sandkit",
 });
 
@@ -98,7 +101,7 @@ Declare `exposedPorts` on `createWorkspace({ sandbox: ... })` only when you need
 
 ## Setup bootstrap
 
-Pass setup to `sandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
+Pass setup to `createSandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
 Each workspace starts from that shared bootstrap snapshot when no workspace-specific durable state exists.
 Sandkit persists one shared bootstrap state per adapter and bootstrap definition (command + args + explicit setup policy), runs setup once per unique bootstrap definition, and reuses the matching state for subsequent workspaces.
 If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and persists a replacement.
@@ -108,10 +111,10 @@ Because setup becomes shared durable state, `setup.policy` must also be durable:
 `setup` durability is adapter-backed. With a persistent adapter such as Bun SQLite or Drizzle, the shared bootstrap survives process restarts. With the default in-memory adapter, it does not.
 
 ```ts
-import { sandkit, allowAll } from "@giselles-ai/sandkit";
+import { createSandkit, allowAll } from "@giselles-ai/sandkit";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 
-const app = sandkit({
+const sandkit = createSandkit({
   sandbox: vercelSandbox(),
   setup: {
     command: "sh",
@@ -120,7 +123,7 @@ const app = sandkit({
   },
 });
 
-const workspace = await app.createWorkspace({
+const workspace = await sandkit.createWorkspace({
   name: "bootstrapped-workspace",
 });
 ```

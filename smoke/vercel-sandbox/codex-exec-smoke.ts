@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-import { allowAll, allowService, codex, sandkit } from "@giselles-ai/sandkit";
+import { allowAll, allowService, codex, createSandkit } from "@giselles-ai/sandkit";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 
@@ -47,14 +47,14 @@ async function runSmoke(): Promise<void> {
   const database = new Database(SQLITE_PATH);
 
   try {
-    const app = sandkit({
+    const sandkit = createSandkit({
       database: createBunSqliteAdapter(database),
       sandbox: vercelSandbox({
         timeout: SANDBOX_TIMEOUT_MS,
       }),
     });
 
-    const workspace = await app.createWorkspace({
+    const workspace = await sandkit.createWorkspace({
       name: "smoke-vercel-codex-exec",
       policy: allowService(codex()),
     });

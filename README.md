@@ -58,24 +58,27 @@ npm install @giselles-ai/sandkit drizzle-orm
 
 ## Quick Start
 
+> Migration note: `sandkit(...)` was renamed to `createSandkit(...)` and this package is not yet aliased.
+Callers must update imports and call sites from `sandkit` to `createSandkit` together.
+
 ```ts
 import { Database } from "bun:sqlite";
 
-import { sandkit } from "@giselles-ai/sandkit";
+import { createSandkit } from "@giselles-ai/sandkit";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 
 const database = new Database("./sandkit.sqlite");
 const workspaceAdapter = createBunSqliteAdapter(database);
 
-const app = sandkit({
+const sandkit = createSandkit({
   database: workspaceAdapter,
   sandbox: vercelSandbox({
     defaultTimeout: 60_000,
   }),
 });
 
-const workspace = await app.createWorkspace({
+const workspace = await sandkit.createWorkspace({
   name: "hello-sandkit",
 });
 
@@ -115,7 +118,7 @@ await workspace.sandbox.runCommand({
 Durable default policy belongs to the workspace. Set it when creating the workspace or update it later:
 
 ```ts
-const workspace = await app.createWorkspace({
+const workspace = await sandkit.createWorkspace({
   policy: allowServices([codex()]),
 });
 
@@ -124,7 +127,7 @@ await workspace.setPolicy(allowServices([codex()]));
 
 ## Setup Bootstrap
 
-Pass setup to `sandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
+Pass setup to `createSandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
 Each workspace starts from that shared bootstrap snapshot when no workspace-specific durable state exists.
 Sandkit persists one shared bootstrap state per adapter and bootstrap definition (command + args), runs setup once per unique bootstrap definition, and reuses the matching state for subsequent workspaces.
 If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and persists a replacement.
@@ -132,7 +135,7 @@ If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and pers
 `setup` durability is adapter-backed. With a persistent adapter such as Bun SQLite or Drizzle, the shared bootstrap survives process restarts. With the default in-memory adapter, it does not.
 
 ```ts
-const app = sandkit({
+const sandkit = createSandkit({
   setup: {
     command: "sh",
     args: ["-lc", "npm ci"],
@@ -145,7 +148,7 @@ const app = sandkit({
 Use a session only when you need a running process or a public URL:
 
 ```ts
-const workspace = await app.createWorkspace({
+const workspace = await sandkit.createWorkspace({
   sandbox: {
     exposedPorts: [3000],
   },
@@ -176,12 +179,12 @@ If you omit `database`, Sandkit defaults to the in-memory adapter.
 The generated schema exports the canonical workspace table as `sandkitWorkspaces`.
 
 ```ts
-import { sandkit, allowServices, codex } from "@giselles-ai/sandkit";
+import { createSandkit, allowServices, codex } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 import { db, schema } from "@/db";
 
-const appSandkit = sandkit({
+const sandkit = createSandkit({
   database: drizzleAdapter(db, {
     provider: "sqlite",
     workspaces: schema.sandkitWorkspaces,

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { sandkit } from "@giselles-ai/sandkit";
+import { createSandkit } from "@giselles-ai/sandkit";
 import type {
   CommandResult,
   PersistedSandboxState,
@@ -245,7 +245,7 @@ async function runSmoke(): Promise<void> {
     migrate(sqlite);
     const db = drizzle(sqlite, { schema });
     const counter = { bootstrapRuns: 0 };
-    const app = sandkit({
+    const sandkit = createSandkit({
       database: drizzleAdapter(db, { provider: "sqlite" }),
       sandbox: internalSandboxProvider(
         createSharedSetupSmokeDriverFactory(counter),
@@ -257,8 +257,8 @@ async function runSmoke(): Promise<void> {
       },
     });
 
-    const firstWorkspace = await app.createWorkspace({ id: "workspace-a" });
-    const secondWorkspace = await app.createWorkspace({ id: "workspace-b" });
+    const firstWorkspace = await sandkit.createWorkspace({ id: "workspace-a" });
+    const secondWorkspace = await sandkit.createWorkspace({ id: "workspace-b" });
 
     const first = await firstWorkspace.sandbox.runCommand({
       command: "cat",
