@@ -205,7 +205,7 @@ async function resolveWorkspace(
   workspaceId: string,
 ): Promise<PublicWorkspaceHandle | null> {
   try {
-    return await facade.runtime.app.getWorkspace(workspaceId);
+    return await facade.runtime.sandkit.getWorkspace(workspaceId);
   } catch {
     return null;
   }
@@ -436,7 +436,7 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
     }
 
     await emitStep({ step: "prepare_workspace", status: "started" });
-    const workspace = await runtime.app.createWorkspace({
+    const workspace = await runtime.sandkit.createWorkspace({
       id: runtime.config.workspaceId,
       name: "openclaw-demo",
       sandbox: {

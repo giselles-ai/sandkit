@@ -410,7 +410,12 @@ function normalizeSandboxTimeout(value: unknown, label: string): number {
     return 60_000;
   }
 
-  if (!Number.isInteger(value) || !Number.isFinite(value) || value <= 0) {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
     throw new Error(`${label} must be a positive integer in milliseconds.`);
   }
 

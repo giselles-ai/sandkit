@@ -126,7 +126,7 @@ const DECISION_SCHEMA = JSON.stringify(
 );
 
 type RuntimeFacade = {
-  app: Awaited<ReturnType<typeof getMergeReadinessRuntime>>["app"];
+  sandkit: Awaited<ReturnType<typeof getMergeReadinessRuntime>>["sandkit"];
   store: MergeReadinessStore;
   resetWorkspaceSandboxState: Awaited<
     ReturnType<typeof getMergeReadinessRuntime>
@@ -282,7 +282,7 @@ function resolveRuntime(): Promise<RuntimeFacade> {
     runtimePromise = (async () => {
       const { app, store, resetWorkspaceSandboxState } = await getMergeReadinessRuntime();
       return {
-        app,
+        sandkit,
         store,
         resetWorkspaceSandboxState,
       };
@@ -1140,7 +1140,7 @@ async function getWorkspace(
   runtime: RuntimeFacade,
   workspaceId: string,
 ): Promise<PublicWorkspaceHandle> {
-  return getOrCreateWorkspaceById(workspaceId, runtime.app);
+  return getOrCreateWorkspaceById(workspaceId, runtime.sandkit);
 }
 
 export async function requestReview(prUrl: string): Promise<{
