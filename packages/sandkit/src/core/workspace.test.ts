@@ -8,10 +8,103 @@ import type {
   CommandResult,
   PersistedSandboxState,
   SandboxDriverFactory,
+  WorkspaceRecord,
   WorkspacePolicy,
 } from "../types.ts";
 import { sandkit } from "./sandkit.ts";
 import { sharedSetupStateId } from "./workspace.ts";
+
+interface CaptureCall {
+  options: {
+    policyMode: WorkspacePolicy["mode"];
+    exposedPorts?: readonly number[];
+    timeoutMs?: number;
+  };
+}
+
+function createWorkspaceCreateOptionRecorder() {
+  const createCalls: CaptureCall[] = [];
+  const resumeCalls: CaptureCall[] = [];
+
+  const factory: SandboxDriverFactory = {
+    async createSandbox(_workspace: WorkspaceRecord, options) {
+      createCalls.push({
+        options: {
+          policyMode: options.policy.mode,
+          exposedPorts: options.exposedPorts,
+          timeoutMs: options.timeoutMs,
+        },
+      });
+
+      return {
+        id: `capture-${createCalls.length}`,
+        provider: "capture-test",
+        async applyPolicy() {},
+        async getSessionLease() {
+          const observedAt = new Date().toISOString();
+          return {
+            sandboxId: `capture-${createCalls.length}`,
+            observedAt,
+            expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
+          };
+        },
+        async runCommand(): Promise<CommandResult> {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        async snapshot() {
+          return {
+            kind: "capture",
+            sessionId: `capture-${createCalls.length}`,
+            state: {
+              setup: false,
+            },
+          };
+        },
+      };
+    },
+    async resumeSandbox(_workspace: WorkspaceRecord, _snapshot: PersistedSandboxState, options) {
+      resumeCalls.push({
+        options: {
+          policyMode: options.policy.mode,
+          exposedPorts: options.exposedPorts,
+          timeoutMs: options.timeoutMs,
+        },
+      });
+
+      return {
+        id: `capture-resume-${resumeCalls.length}`,
+        provider: "capture-test",
+        async applyPolicy() {},
+        async getSessionLease() {
+          const observedAt = new Date().toISOString();
+          return {
+            sandboxId: `capture-resume-${resumeCalls.length}`,
+            observedAt,
+            expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
+          };
+        },
+        async runCommand(): Promise<CommandResult> {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        async snapshot() {
+          return {
+            kind: "capture",
+            sessionId: `capture-resume-${resumeCalls.length}`,
+            state: {
+              setup: true,
+            },
+          };
+        },
+      };
+    },
+  };
+
+  return {
+    factory,
+    createCalls,
+    resumeCalls,
+  };
+}
 
 function createSetupRecoveryDriverFactory(): SandboxDriverFactory {
   class SetupRecoveryDriver {
@@ -165,6 +258,51 @@ describe("Workspace session policy lifecycle", () => {
     const reattachedSession = await reloadedWorkspace.sandbox.attachSession();
     const afterReattach = await reattachedSession.exec("policy-id", []);
     expect(afterReattach.stdout.trim()).toBe("allow-services:live");
+  });
+
+  test("persists durable sandbox create options across create/resume", async () => {
+    const { factory, createCalls, resumeCalls } = createWorkspaceCreateOptionRecorder();
+    const app = sandkit({
+      sandbox: internalSandboxProvider(factory, "vercel-test"),
+    });
+
+    const workspace = await app.createWorkspace({
+      sandbox: {
+        exposedPorts: [3000, 3001],
+      },
+    });
+
+    const firstRun = await workspace.sandbox.runCommand("cat", ["hello.txt"]);
+    expect(firstRun.exitCode).toBe(0);
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0].options.policyMode).toBe("allow-all");
+    expect(createCalls[0].options.exposedPorts).toEqual([3000, 3001]);
+    expect(createCalls[0].options.timeoutMs).toBeUndefined();
+
+    const reloadedWorkspace = await app.getWorkspace(workspace.id);
+    const secondRun = await reloadedWorkspace.sandbox.runCommand("cat", ["hello.txt"]);
+    expect(secondRun.exitCode).toBe(0);
+    expect(resumeCalls).toHaveLength(1);
+    expect(resumeCalls[0].options.exposedPorts).toEqual([3000, 3001]);
+  });
+
+  test("passes openSession timeoutMs override to create/restore options", async () => {
+    const { factory, createCalls, resumeCalls } = createWorkspaceCreateOptionRecorder();
+    const app = sandkit({
+      sandbox: internalSandboxProvider(factory, "vercel-test"),
+    });
+
+    const workspace = await app.createWorkspace({
+      sandbox: {
+        exposedPorts: [8080],
+      },
+    });
+
+    await workspace.sandbox.openSession({ timeoutMs: 120_000 });
+    expect(createCalls).toHaveLength(1);
+    expect(resumeCalls).toHaveLength(0);
+    expect(createCalls[0].options.timeoutMs).toBe(120_000);
+    expect(createCalls[0].options.exposedPorts).toEqual([8080]);
   });
 });
 

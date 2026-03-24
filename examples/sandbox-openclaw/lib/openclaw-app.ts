@@ -79,8 +79,7 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
     database: adapter,
     sandbox: vercelSandbox({
       runtime: "node24",
-      timeout: SANDBOX_TIMEOUT_MS,
-      ports: [OPENCLAW_GATEWAY_PORT],
+      defaultTimeout: SANDBOX_TIMEOUT_MS,
     }),
   });
 

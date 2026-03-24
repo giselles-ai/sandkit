@@ -51,6 +51,14 @@ export interface WorkspaceCreateOptions {
   name?: string;
   metadata?: WorkspaceMetadata;
   policy?: WorkspacePolicy;
+  sandbox?: {
+    /**
+     * Durable workspace default for provider port publication. This affects
+     * create/restore behavior for live session/public URL flows, not the
+     * durable runCommand() unit-of-work model itself.
+     */
+    readonly exposedPorts?: readonly number[];
+  };
   status?: WorkspaceStatus;
   sandboxId?: string;
   lastResumedAt?: string;
@@ -141,6 +149,8 @@ export interface SandboxDriver {
 
 export interface SandboxCreateOptions {
   readonly policy: WorkspacePolicy;
+  readonly exposedPorts?: readonly number[];
+  readonly timeoutMs?: number;
 }
 
 export interface SandboxDriverFactory {
@@ -155,8 +165,17 @@ export interface SandboxDriverFactory {
 
 export interface VercelSandboxOptions {
   runtime?: string;
+  /**
+   * Provider default sandbox lease timeout in milliseconds. Sandkit uses this
+   * when creating or restoring a sandbox unless openSession({ timeoutMs })
+   * supplies a live-session override.
+   */
+  defaultTimeout?: number;
+  /**
+   * Legacy alias retained for compatibility with existing call sites.
+   * Prefer defaultTimeout for new code.
+   */
   timeout?: number;
-  ports?: number[];
 }
 
 const sandboxProviderContract = Symbol("sandkit.sandbox.provider");
