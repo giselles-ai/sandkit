@@ -314,7 +314,10 @@ async function runAggregateFailureScenario(): Promise<void> {
     database: createMemoryAdapter(),
     sandbox: internalSandboxProvider(createFailingDriverFactory(), "aggregate-failure"),
   });
-  const workspace = await sandkit.createWorkspace({ name: "aggregate-failure", policy: allowAll() });
+  const workspace = await sandkit.createWorkspace({
+    name: "aggregate-failure",
+    policy: allowAll(),
+  });
 
   await expectAggregateError(
     "command + durability failure",

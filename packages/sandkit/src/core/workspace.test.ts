@@ -208,9 +208,7 @@ function createSetupRecoveryDriverFactory(): SandboxDriverFactory {
   };
 }
 
-function createMockSandkit(
-  input: Omit<SandkitOptions, "sandbox"> = {},
-): Sandkit {
+function createMockSandkit(input: Omit<SandkitOptions, "sandbox"> = {}): Sandkit {
   return createSandkit({
     ...input,
     sandbox: mockSandbox(),
@@ -382,7 +380,10 @@ describe("Workspace setup lifecycle", () => {
       },
     });
     const workspace = await sandkit.createWorkspace();
-    const sharedStateId = sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup);
+    const sharedStateId = sharedSetupStateId(
+      sandkit.context.adapter.id,
+      sandkit.context.options.setup,
+    );
 
     await expect(
       workspace.sandbox.runCommand({

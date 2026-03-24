@@ -1,7 +1,7 @@
 import { createSandkit } from "@giselles-ai/sandkit";
+import type { Sandkit } from "@giselles-ai/sandkit";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
-import type { Sandkit } from "@giselles-ai/sandkit";
 
 async function assertThrows(message: string, operation: () => Promise<unknown>): Promise<void> {
   try {

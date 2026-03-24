@@ -59,7 +59,7 @@ npm install @giselles-ai/sandkit drizzle-orm
 ## Quick Start
 
 > Migration note: `sandkit(...)` was renamed to `createSandkit(...)` and this package is not yet aliased.
-Callers must update imports and call sites from `sandkit` to `createSandkit` together.
+> Callers must update imports and call sites from `sandkit` to `createSandkit` together.
 
 ```ts
 import { Database } from "bun:sqlite";
