@@ -39,13 +39,19 @@ function normalizeHeaderTransform(
   header: PolicyServiceHeaderTransform,
 ): PolicyServiceHeaderTransform {
   const headerName = header.headerName.trim().toLowerCase();
+  const valueEncoding = header.valueEncoding ?? "plain";
   if (!headerName) {
     throw new Error("Policy header transform must include a header name.");
+  }
+  if (valueEncoding !== "plain" && valueEncoding !== "base64") {
+    throw new Error(`Policy header transform for "${headerName}" has unsupported valueEncoding.`);
   }
 
   return {
     headerName,
     valuePrefix: header.valuePrefix,
+    credentialPrefix: header.credentialPrefix,
+    valueEncoding,
     credential: normalizeCredentialSource(header.credential),
   };
 }
@@ -69,12 +75,33 @@ function normalizeService(service: PolicyServiceDescriptor): PolicyServiceDescri
     throw new Error(`Policy service "${id}" must declare at least one domain.`);
   }
 
+  const normalizedDomainHeaders =
+    service.domainHeaders === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(service.domainHeaders)
+            .map(([domain, headers]) => [
+              domain.trim(),
+              headers.map((header) => normalizeHeaderTransform(header)),
+            ])
+            .filter(([domain]) => Boolean(domain)),
+        );
+
+  for (const domain of Object.keys(normalizedDomainHeaders ?? {})) {
+    if (!domains.includes(domain)) {
+      throw new Error(
+        `Policy service "${id}" defines domainHeaders for "${domain}" but does not declare that domain.`,
+      );
+    }
+  }
+
   return {
     id,
     name,
     description: service.description?.trim() || undefined,
     domains,
     headers: service.headers?.map((header) => normalizeHeaderTransform(header)),
+    domainHeaders: normalizedDomainHeaders,
   };
 }
 
@@ -140,8 +167,26 @@ export function redactWorkspacePolicy(policy: WorkspacePolicy): WorkspacePolicy 
       headers: service.headers?.map((header) => ({
         headerName: header.headerName,
         valuePrefix: header.valuePrefix,
+        credentialPrefix: header.credentialPrefix,
+        valueEncoding: header.valueEncoding,
         credential: header.credential.kind === "value" ? { kind: "redacted" } : header.credential,
       })),
+      domainHeaders:
+        service.domainHeaders === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(service.domainHeaders).map(([domain, headers]) => [
+                domain,
+                headers.map((header) => ({
+                  headerName: header.headerName,
+                  valuePrefix: header.valuePrefix,
+                  credentialPrefix: header.credentialPrefix,
+                  valueEncoding: header.valueEncoding,
+                  credential:
+                    header.credential.kind === "value" ? { kind: "redacted" } : header.credential,
+                })),
+              ]),
+            ),
     })),
   };
 }
@@ -157,6 +202,15 @@ export function assertWorkspacePolicyIsDurable(policy: WorkspacePolicy): void {
         throw new Error(
           `Workspace policy for service "${service.id}" contains an explicit secret and cannot be stored durably.`,
         );
+      }
+    }
+    for (const headers of Object.values(service.domainHeaders ?? {})) {
+      for (const header of headers) {
+        if (header.credential.kind === "value") {
+          throw new Error(
+            `Workspace policy for service "${service.id}" contains an explicit secret and cannot be stored durably.`,
+          );
+        }
       }
     }
   }
@@ -217,6 +271,14 @@ export function parseWorkspacePolicy(value: unknown): WorkspacePolicy {
                     headerName: header.headerName,
                     valuePrefix:
                       typeof header.valuePrefix === "string" ? header.valuePrefix : undefined,
+                    credentialPrefix:
+                      typeof header.credentialPrefix === "string"
+                        ? header.credentialPrefix
+                        : undefined,
+                    valueEncoding:
+                      header.valueEncoding === "base64" || header.valueEncoding === "plain"
+                        ? header.valueEncoding
+                        : undefined,
                     credential: {
                       kind: "default",
                     },
@@ -228,6 +290,14 @@ export function parseWorkspacePolicy(value: unknown): WorkspacePolicy {
                     headerName: header.headerName,
                     valuePrefix:
                       typeof header.valuePrefix === "string" ? header.valuePrefix : undefined,
+                    credentialPrefix:
+                      typeof header.credentialPrefix === "string"
+                        ? header.credentialPrefix
+                        : undefined,
+                    valueEncoding:
+                      header.valueEncoding === "base64" || header.valueEncoding === "plain"
+                        ? header.valueEncoding
+                        : undefined,
                     credential: { kind: "redacted" },
                   });
                 }
@@ -238,12 +308,85 @@ export function parseWorkspacePolicy(value: unknown): WorkspacePolicy {
               });
             })();
 
+      const domainHeaders =
+        service.domainHeaders === undefined
+          ? undefined
+          : (() => {
+              if (!isRecord(service.domainHeaders)) {
+                throw new Error(`service at index ${index} has invalid domain headers`);
+              }
+
+              return Object.fromEntries(
+                Object.entries(service.domainHeaders).map(([domain, rawHeaders]) => {
+                  if (!isRecordArray(rawHeaders)) {
+                    throw new Error(
+                      `service at index ${index} has invalid domain headers for ${domain}`,
+                    );
+                  }
+
+                  return [
+                    domain,
+                    rawHeaders.map((header, headerIndex) => {
+                      if (
+                        typeof header.headerName !== "string" ||
+                        !isRecord(header.credential) ||
+                        typeof header.credential.kind !== "string"
+                      ) {
+                        throw new Error(
+                          `service at index ${index} has invalid domain header transform for ${domain} at ${headerIndex}`,
+                        );
+                      }
+
+                      if (header.credential.kind === "default") {
+                        return normalizeHeaderTransform({
+                          headerName: header.headerName,
+                          valuePrefix:
+                            typeof header.valuePrefix === "string" ? header.valuePrefix : undefined,
+                          credentialPrefix:
+                            typeof header.credentialPrefix === "string"
+                              ? header.credentialPrefix
+                              : undefined,
+                          valueEncoding:
+                            header.valueEncoding === "base64" || header.valueEncoding === "plain"
+                              ? header.valueEncoding
+                              : undefined,
+                          credential: { kind: "default" },
+                        });
+                      }
+
+                      if (header.credential.kind === "redacted") {
+                        return normalizeHeaderTransform({
+                          headerName: header.headerName,
+                          valuePrefix:
+                            typeof header.valuePrefix === "string" ? header.valuePrefix : undefined,
+                          credentialPrefix:
+                            typeof header.credentialPrefix === "string"
+                              ? header.credentialPrefix
+                              : undefined,
+                          valueEncoding:
+                            header.valueEncoding === "base64" || header.valueEncoding === "plain"
+                              ? header.valueEncoding
+                              : undefined,
+                          credential: { kind: "redacted" },
+                        });
+                      }
+
+                      throw new Error(
+                        `service at index ${index} contains a non-durable credential source in domain headers`,
+                      );
+                    }),
+                  ];
+                }),
+              );
+            })();
+
       return normalizeService({
         id: service.id,
         name: service.name,
         description: typeof service.description === "string" ? service.description : undefined,
         domains: service.domains,
         headers,
+        domainHeaders,
       });
     });
 

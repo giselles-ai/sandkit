@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { createSandkit, allowService, codex, gemini, github } from "@giselles-ai/sandkit";
+import { createSandkit, allowService, codex, github, gemini } from "@giselles-ai/sandkit";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { createBunSqliteAdapter } from "@giselles-ai/sandkit/adapters/sqlite-bun";
 import { mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
@@ -18,12 +18,32 @@ function readAuthorizationHeader(
   }
 
   const rules = policy.allow[domain];
-  const header = rules?.[0]?.transform?.[0]?.headers?.authorization;
-  if (!header) {
-    throw new Error(`Smoke failed: expected authorization header for ${domain}`);
-  }
+  return rules?.[0]?.transform?.[0]?.headers?.authorization;
+}
 
-  return header;
+function expectAuthorizationHeader(
+  policy: ReturnType<typeof compileVercelNetworkPolicy>,
+  domain: string,
+  expected: string,
+) {
+  const header = readAuthorizationHeader(policy, domain);
+  if (header !== expected) {
+    throw new Error(`Smoke failed: expected ${domain} authorization header "${expected}", got "${header}"`);
+  }
+}
+
+function expectNoAuthorizationHeader(
+  policy: ReturnType<typeof compileVercelNetworkPolicy>,
+  domain: string,
+) {
+  const header = readAuthorizationHeader(policy, domain);
+  if (header !== undefined) {
+    throw new Error(`Smoke failed: expected no authorization header for ${domain}`);
+  }
+}
+
+function toBasicAuth(username: string, password: string): string {
+  return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
 }
 
 async function expectFailure(label: string, operation: () => Promise<unknown>, expected: string) {
@@ -56,10 +76,16 @@ function expectSyncFailure(label: string, operation: () => unknown, expected: st
 
 async function runSmoke(): Promise<void> {
   process.env.CODEX_API_KEY = "env-secret";
+  process.env.GITHUB_TOKEN = "env-secret";
   const envCompiled = compileVercelNetworkPolicy(allowService(codex()));
   if (readAuthorizationHeader(envCompiled, "api.openai.com") !== "Bearer env-secret") {
     throw new Error("Smoke failed: expected CODEX_API_KEY to compile into authorization header");
   }
+
+  const githubEnvCompiled = compileVercelNetworkPolicy(github());
+  expectAuthorizationHeader(githubEnvCompiled, "github.com", toBasicAuth("x-access-token", "env-secret"));
+  expectAuthorizationHeader(githubEnvCompiled, "api.github.com", "Bearer env-secret");
+  expectNoAuthorizationHeader(githubEnvCompiled, "*.githubusercontent.com");
 
   const explicitCompiled = compileVercelNetworkPolicy(
     allowService(codex({ apiKey: "explicit-secret" })),
@@ -68,7 +94,17 @@ async function runSmoke(): Promise<void> {
     throw new Error("Smoke failed: expected explicit apiKey to compile into authorization header");
   }
 
+  const explicitGithubCompiled = compileVercelNetworkPolicy(github({ token: "explicit-secret" }));
+  expectAuthorizationHeader(
+    explicitGithubCompiled,
+    "github.com",
+    toBasicAuth("x-access-token", "explicit-secret"),
+  );
+  expectAuthorizationHeader(explicitGithubCompiled, "api.github.com", "Bearer explicit-secret");
+  expectNoAuthorizationHeader(explicitGithubCompiled, "*.githubusercontent.com");
+
   delete process.env.CODEX_API_KEY;
+  delete process.env.GITHUB_TOKEN;
   await expectFailure(
     "missing env credential",
     async () => {
@@ -89,8 +125,8 @@ async function runSmoke(): Promise<void> {
   );
   expectSyncFailure(
     "github empty override",
-    () => github({ apiKey: "   " }),
-    'github(...) explicit override requires a non-empty "apiKey"',
+    () => github({ token: "   " }),
+    'github(...) explicit override requires a non-empty "token"',
   );
 
   const sandkit = createSandkit({

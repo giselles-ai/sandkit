@@ -4,6 +4,7 @@ export interface PolicyServiceDescriptor {
   readonly description?: string;
   readonly domains: readonly string[];
   readonly headers?: readonly PolicyServiceHeaderTransform[];
+  readonly domainHeaders?: Readonly<Record<string, readonly PolicyServiceHeaderTransform[]>>;
 }
 
 export interface PolicyServiceCredentialDefault {
@@ -27,6 +28,8 @@ export type PolicyServiceCredentialSource =
 export interface PolicyServiceHeaderTransform {
   readonly headerName: string;
   readonly valuePrefix?: string;
+  readonly credentialPrefix?: string;
+  readonly valueEncoding?: "plain" | "base64";
   readonly credential: PolicyServiceCredentialSource;
 }
 
