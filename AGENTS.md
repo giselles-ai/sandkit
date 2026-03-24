@@ -2,62 +2,69 @@
 
 ## Workflow
 
-At the start of each thread, check the ghost first.
-
 If the user's prompt includes a GitHub URL, retrieve the referenced issue, pull request, commit, or repository context with `gh` CLI before acting on it.
 
-## Ghost
+## Principles
 
-A ghost is not a generic summary.
-It is a preserved trace of judgment:
+Sandkit's public center of gravity is `workspace.sandbox.runCommand(...)` as the durable unit of work.
 
-- what mattered in a session
-- which design pressures were real
-- what was decided
-- what must not be casually undone
-- where future work should go next
+- Keep persistence responsibility inside Sandkit, not with callers.
+- Do not reintroduce `workspace.createOrResumeSandbox()` as the intended public entrypoint.
+- Preserve provider truth, especially Vercel Sandbox lifecycle behavior, even when the public API uses Sandkit-shaped names.
+- Prefer code structure, types, and transitions that reveal the specification over prose-only explanations.
 
-Ghost files live under:
+The durable/live split is intentional and should remain explicit.
 
-`.agents/ghost/`
+- `runCommand(...)` is the default durable path.
+- `session` is the explicit live phase for long-running interactive workloads.
+- A live session is an exclusive lease; do not let `runCommand()` race with it.
+- Public session semantics should stay provider-neutral even when backed by Vercel snapshot behavior.
+- `session` is not a raw shell handle. It is a managed live phase on top of the durable workspace model.
 
-They are intended to be read by later agents before making design changes in areas that already carry strong prior reasoning.
+Workspace state is the durable source of truth.
 
-## Skill
+- Sandbox lifecycle and commits should remain explicit state transitions, not metadata soup.
+- Keep the internal model legible as a lifecycle such as resolve -> execute -> commit -> persist.
+- Policy is workspace-owned durable default state.
+- Per-run policy override belongs only on `runCommand({ policy })`.
+- Secrets may be resolved at apply time but must not be stored durably.
+- Do not let per-run overrides silently mutate durable workspace defaults.
 
-When a human explicitly wants to preserve the current session for later agents, use the `leave-ghost` skill:
+Provider honesty matters more than pretty abstraction.
 
-`/Users/satoshi/repo/toyamarinyon/sandbox-devkit/.codex/skills/leave-ghost/SKILL.md`
+- Vercel snapshot semantics are real and should not be disguised as a harmless save.
+- A snapshot-backed commit may stop the runtime; design and naming must not hide that.
+- Policy semantics should start from the provider's real model, not from a generic evaluator-first abstraction.
+- Wildcard and network policy behavior must match provider semantics exactly.
+- Bootstrap/open-network phases and restricted execution phases are distinct and should stay distinct.
+- Route propagation, ports, PATH quirks, and similar provider details are part of the truth, not noise to abstract away.
+- Do not assume smoke failures are code failures before separating auth, environment, network, and provider-runtime causes.
 
-That skill writes a ghost file in timestamp-thread form:
+Package and example discipline matter.
 
-`.agents/ghost/YYYYMMDDHHMM-<session-id>.md`
+- Keep package exports and build surface minimal and tied to real consumers.
+- Prefer real consumer setups such as `workspace:*` and packed package flows over path-import demos.
+- Do not add config or discovery magic unless it pays for itself in real use.
+- Discovery and convenience fallbacks must remain subordinate to explicit user input and explicit flags.
+- Do not treat private internals or brittle library internals as the semantic center of an integration just because they help ergonomics.
 
-## How To Use Ghosts
+Policy and credential design should stay honest.
 
-Read ghosts when:
+- Model workspace policy as durable workspace state, not sandbox-handle-owned mutable state.
+- Prefer service-oriented policy builders that compile into durable provider-shaped policy, rather than cute rule-list APIs.
+- Do not preserve fake compatibility for removed or renamed policy inputs.
+- Wildcards must not silently broaden meaning.
+- Default credentials may resolve from the environment at apply time, but raw secrets must never be persisted in workspace state or snapshots.
+- Explicit secret-bearing overrides are ephemeral and must not silently collapse into default credential mode.
 
-- a design choice seems surprising
-- a constraint feels stronger than the current code alone explains
-- an area has already gone through substantial discussion
-- you are about to simplify something that may actually encode an important semantic
+Examples and smokes must tell the truth.
 
-Ghosts are especially important when working on:
+- A smoke only counts as evidence if it really executes the path it claims to verify.
+- Keep bootstrap/setup phases distinct from restricted execution phases when that separation is necessary to explain failures honestly.
+- Skipped smokes are not successful end-to-end verification.
+- Production-shaped examples should recover from realistic broken intermediate state instead of assuming clean starts.
 
-- sandbox lifecycle
-- persistence semantics
-- provider-specific behavior hidden behind abstractions
-- API simplification that may erase hard-won design constraints
-
-## Operating Principle
-
-When the code is ambiguous and the path forward is unclear, prefer the direction that is most consistent with the ghost.
-
-If you have to choose between a superficially simpler change and a change that preserves the established judgment of the project, choose the one that preserves the ghost.
-
-In short:
-
-When in doubt, follow the direction where the ghost is whispering.
+When the code is ambiguous and the path forward is unclear, prefer the change that preserves these principles over a superficially simpler shortcut.
 
 <!-- opensrc:start -->
 

@@ -34,8 +34,7 @@ async function responseFromState(state: OpenClawState) {
 }
 
 export async function GET() {
-  const state = await readState();
-  return responseFromState(state);
+  return responseFromState(await readState());
 }
 
 export async function POST(req: NextRequest) {

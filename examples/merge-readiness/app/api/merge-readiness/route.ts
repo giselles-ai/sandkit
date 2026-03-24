@@ -94,8 +94,7 @@ export async function POST(
       return NextResponse.json(next);
     }
 
-    const review = await resumeReview(payload.reviewId);
-    return NextResponse.json({ review });
+    return NextResponse.json({ review: await resumeReview(payload.reviewId) });
   } catch (error) {
     return NextResponse.json({ error: describeTopActionError(error) }, { status: 500 });
   }

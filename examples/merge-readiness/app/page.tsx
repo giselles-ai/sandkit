@@ -50,8 +50,7 @@ async function loadDashboard(): Promise<TopReviewSummary[]> {
   if (!response.ok) {
     throw new Error("Failed to load dashboard.");
   }
-  const payload = (await response.json()) as TopApiResponse;
-  return payload.reviews;
+  return ((await response.json()) as TopApiResponse).reviews;
 }
 
 async function requestReview(prUrl: string): Promise<TopActionResult> {
@@ -92,8 +91,7 @@ export default function Page() {
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const rows = await loadDashboard();
-    setReviews(rows);
+    setReviews(await loadDashboard());
   }, []);
 
   useEffect(() => {

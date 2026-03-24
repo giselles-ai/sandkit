@@ -700,34 +700,28 @@ async function getRuntime(): Promise<Runtime> {
 }
 
 async function createRuntime(): Promise<Runtime> {
-  const runtime = await getOpenClawRuntime();
-  return createRuntimeActions(runtime);
+  return createRuntimeActions(await getOpenClawRuntime());
 }
 
 export async function readState(): Promise<OpenClawState> {
-  const runtime = await getRuntime();
-  return runtime.getState();
+  return (await getRuntime()).getState();
 }
 
 export async function createWorkspace(progress?: OpenClawCreateProgress): Promise<OpenClawState> {
-  const runtime = await getRuntime();
-  return runtime.createWorkspace(progress);
+  return (await getRuntime()).createWorkspace(progress);
 }
 
 export async function startSession(
   durationMs?: number,
   progress?: OpenClawStartProgress,
 ): Promise<OpenClawState> {
-  const runtime = await getRuntime();
-  return runtime.startSession(durationMs, progress);
+  return (await getRuntime()).startSession(durationMs, progress);
 }
 
 export async function extendSession(durationMs: number): Promise<OpenClawState> {
-  const runtime = await getRuntime();
-  return runtime.extendSession(durationMs);
+  return (await getRuntime()).extendSession(durationMs);
 }
 
 export async function commitSession(): Promise<OpenClawState> {
-  const runtime = await getRuntime();
-  return runtime.commitSession();
+  return (await getRuntime()).commitSession();
 }

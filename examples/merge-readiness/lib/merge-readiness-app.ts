@@ -134,12 +134,10 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
     },
   });
 
-  const adapter = drizzleAdapter(db, {
-    provider: "sqlite",
-  });
-
   const sandkit = createSandkit({
-    database: adapter,
+    database: drizzleAdapter(db, {
+      provider: "sqlite",
+    }),
     setup: {
       command: "bash",
       args: [
