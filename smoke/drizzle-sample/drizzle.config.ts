@@ -3,7 +3,7 @@ export default {
   schema: "./generated/sandkit-schema.generated.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: "file:./smoke-drizzle-workspaces.sqlite",
+    url: "./smoke-drizzle-workspaces.sqlite",
   },
   verbose: true,
 } as const;

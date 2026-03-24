@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "smoke": "bun run generate:sandkit && bun run drizzle:generate && bun run drizzle:migrate && bun run app",
+    "smoke": "bun run clean:smoke-state && bun run generate:sandkit && bun run drizzle:generate && bun run drizzle:migrate && bun run app",
+    "clean:smoke-state": "bun run scripts/clean-smoke-state.ts",
     "generate:sandkit": "bun run scripts/generate-schema.ts",
     "drizzle:generate": "bunx drizzle-kit generate --config drizzle.config.ts",
     "drizzle:migrate": "bunx drizzle-kit migrate --config drizzle.config.ts",

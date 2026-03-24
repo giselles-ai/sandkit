@@ -3,8 +3,11 @@
 This sample runs a minimal end-to-end path:
 
 1. generate Sandkit canonical schema via `sandkit/cli/generate`
-2. run drizzle-kit `generate` and `migrate`
-3. initialize Sandkit with the generated schema and create/reload a workspace
+2. reset generated migration state (`drizzle/`) and local sqlite DB so stale partial artifacts can't break `drizzle-kit`
+3. run drizzle-kit `generate` and `migrate` from a fresh database
+4. initialize Sandkit with the generated schema and create/reload a workspace
+
+`drizzle/` and `smoke-drizzle-workspaces.sqlite` are generated/disposable state for this smoke run and are not source-of-truth input.
 
 Run it from repository root:
 
@@ -25,6 +28,7 @@ To rerun just this directory manually:
 
 ```sh
 cd smoke/drizzle-sample
+bun run clean:smoke-state
 bun run generate:sandkit
 bun run drizzle:generate
 bun run drizzle:migrate
