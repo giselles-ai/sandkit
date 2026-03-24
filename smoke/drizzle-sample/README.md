@@ -33,4 +33,4 @@ bun run generate:sandkit
 bun run drizzle:generate
 bun run drizzle:migrate
 bun run app
-``` 
+```
