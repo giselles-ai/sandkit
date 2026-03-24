@@ -1,0 +1,15 @@
+{
+  "name": "hello-sandkit",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun --env-file .env.local index.ts"
+  },
+  "dependencies": {
+    "@giselles-ai/sandkit": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
