@@ -1,9 +1,9 @@
-name = "lilas"
+name = "builder"
 description = "Implementation-focused Sandkit worker for concrete, scoped code changes once the relevant code path is known."
 model = "gpt-5.3-codex-spark"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
-nickname_candidates = ["Lilas", "Iris", "Aster"]
+nickname_candidates = ["lilas", "ikura"]
 developer_instructions = """
 Own the implementation once the task is concrete.
 
