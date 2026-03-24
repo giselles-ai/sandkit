@@ -280,7 +280,7 @@ type GitHubStatusResponse = {
 function resolveRuntime(): Promise<RuntimeFacade> {
   if (!runtimePromise) {
     runtimePromise = (async () => {
-      const { app, store, resetWorkspaceSandboxState } = await getMergeReadinessRuntime();
+      const { store, resetWorkspaceSandboxState } = await getMergeReadinessRuntime();
       return {
         sandkit,
         store,
