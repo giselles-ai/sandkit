@@ -158,8 +158,7 @@ async function createMergeReadinessRuntime(): Promise<MergeReadinessRuntime> {
     },
     sandbox: vercelSandbox({
       runtime: "node24",
-      timeout: parsePositiveMs(SANDBOX_TIMEOUT_MS),
-      ports: [3001],
+      defaultTimeout: parsePositiveMs(SANDBOX_TIMEOUT_MS),
     }),
   });
 
@@ -212,6 +211,9 @@ export async function getOrCreateWorkspaceById(
         id,
         name: `merge-readiness-${id}`,
         policy: policyForMergeReadiness(),
+        sandbox: {
+          exposedPorts: [3001],
+        },
       });
     }
 

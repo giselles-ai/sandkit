@@ -38,7 +38,7 @@ Read order for understanding the example boundary split:
   `drizzle.config.ts` and keeps this generated/app overlay split explicit.
 - `openclaw_sessions` stores durable bootstrap/session progression, while
   `sandkit_workspaces.metadata` keeps only the current OpenClaw summary.
-- Uses `openSession()` for the live phase where OpenClaw actually runs.
+- Uses `openSession()` for the live phase where OpenClaw actually runs. The gateway port exposure is configured on workspace creation through `createWorkspace({ sandbox: { exposedPorts } })`.
 - Uses `attachSession()`, `extendTimeout()`, and `commit()` from the session handle.
 - Persists Sandkit metadata with `drizzle` + `sqlite`.
 - Rewrites OpenClaw Control UI config during `startSession()` so `allowedOrigins` is the exact public sandbox origin, not `["*"]`.

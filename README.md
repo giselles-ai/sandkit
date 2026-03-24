@@ -71,7 +71,7 @@ const workspaceAdapter = createBunSqliteAdapter(database);
 const app = sandkit({
   database: workspaceAdapter,
   sandbox: vercelSandbox({
-    timeout: 60_000,
+    defaultTimeout: 60_000,
   }),
 });
 
@@ -145,6 +145,12 @@ const app = sandkit({
 Use a session only when you need a running process or a public URL:
 
 ```ts
+const workspace = await app.createWorkspace({
+  sandbox: {
+    exposedPorts: [3000],
+  },
+});
+
 const session = await workspace.sandbox.openSession();
 
 await session.exec({
@@ -155,6 +161,8 @@ await session.exec({
 const url = await session.url(3000);
 await session.commit();
 ```
+
+Declare `exposedPorts` on the workspace only when you intend to publish a live session URL. Keep `defaultTimeout` as the provider-level lease default, and use `openSession({ timeoutMs })` when a specific live session needs a different timeout.
 
 `runCommand()` and a live session are intentionally separate. If a session is active, attach to it or commit it before running another durable command.
 

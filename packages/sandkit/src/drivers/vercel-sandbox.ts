@@ -327,13 +327,14 @@ export function normalizeCommandLog(log: unknown): WorkspaceSessionLog | null {
 
 class VercelSandboxDriverFactory implements SandboxDriverFactory {
   readonly #runtime: string;
-  readonly #timeout: number;
-  readonly #ports?: number[];
+  readonly #defaultTimeout: number;
 
   constructor(options: VercelSandboxOptions = {}) {
     this.#runtime = options.runtime ?? "node24";
-    this.#timeout = options.timeout ?? 60_000;
-    this.#ports = options.ports;
+    this.#defaultTimeout = normalizeSandboxTimeout(
+      options.defaultTimeout ?? options.timeout,
+      "Vercel sandbox default timeout",
+    );
   }
 
   isSessionUnavailableError(error: unknown): boolean {
@@ -354,10 +355,12 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
     _workspace: WorkspaceRecord,
     options: SandboxCreateOptions,
   ): Promise<SandboxDriver> {
+    const timeout = this.#defaultTimeoutForCreate(options);
+
     const sandbox = await Sandbox.create({
       runtime: this.#runtime,
-      timeout: this.#timeout,
-      ports: this.#ports,
+      timeout,
+      ports: options.exposedPorts,
       networkPolicy: compileVercelNetworkPolicy(options.policy),
     });
 
@@ -369,6 +372,7 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
     snapshot: PersistedSandboxState,
     options: SandboxCreateOptions,
   ): Promise<SandboxDriver> {
+    const timeout = this.#defaultTimeoutForCreate(options);
     const state = snapshot.state as VercelPersistedState | undefined;
     const snapshotId = state?.snapshotId;
     const fallbackSandboxId = workspace.sandboxId ?? snapshot.sessionId;
@@ -385,8 +389,8 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
               type: "snapshot",
               snapshotId,
             },
-            timeout: this.#timeout,
-            ports: this.#ports,
+            timeout,
+            ports: options.exposedPorts,
             networkPolicy: compileVercelNetworkPolicy(options.policy),
           });
 
@@ -395,6 +399,22 @@ class VercelSandboxDriverFactory implements SandboxDriverFactory {
     // fail on otherwise read-only flows like getActiveLease().
     return new VercelSandboxDriver(sandbox);
   }
+
+  #defaultTimeoutForCreate(options: SandboxCreateOptions): number {
+    return normalizeSandboxTimeout(options.timeoutMs ?? this.#defaultTimeout, "runtime timeout");
+  }
+}
+
+function normalizeSandboxTimeout(value: unknown, label: string): number {
+  if (value === undefined) {
+    return 60_000;
+  }
+
+  if (!Number.isInteger(value) || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer in milliseconds.`);
+  }
+
+  return value;
 }
 
 export function createVercelSandboxDriverFactory(

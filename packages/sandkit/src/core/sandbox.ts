@@ -12,7 +12,12 @@ import { makeSnapshotCommit, type SandboxCommit } from "./workspace-state.ts";
 export interface WorkspaceSandboxHandle {
   runCommand(command: string, args: string[]): Promise<CommandResult>;
   runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
-  openSession(): Promise<WorkspaceSessionHandle>;
+  /**
+   * Opens a live sandbox lease. timeoutMs overrides the provider's default
+   * lease timeout for this session start; it does not change runCommand()
+   * semantics or command-level timeouts.
+   */
+  openSession(input?: { timeoutMs?: number }): Promise<WorkspaceSessionHandle>;
   attachSession(): Promise<WorkspaceSessionHandle>;
   getActiveLease(): Promise<WorkspaceSandboxLease | null>;
 }
@@ -458,13 +463,13 @@ export class ManagedSession implements WorkspaceSessionHandle {
 
 export class LazySandboxHandle implements WorkspaceSandboxHandle {
   readonly #resolveSandbox: () => Promise<ManagedSandbox>;
-  readonly #openSession: () => Promise<WorkspaceSessionHandle>;
+  readonly #openSession: (input?: { timeoutMs?: number }) => Promise<WorkspaceSessionHandle>;
   readonly #attachSession: () => Promise<WorkspaceSessionHandle>;
   readonly #getActiveLease: () => Promise<WorkspaceSandboxLease | null>;
 
   constructor(
     resolveSandbox: () => Promise<ManagedSandbox>,
-    openSession: () => Promise<WorkspaceSessionHandle>,
+    openSession: (input?: { timeoutMs?: number }) => Promise<WorkspaceSessionHandle>,
     attachSession: () => Promise<WorkspaceSessionHandle>,
     getActiveLease: () => Promise<WorkspaceSandboxLease | null>,
   ) {
@@ -487,8 +492,8 @@ export class LazySandboxHandle implements WorkspaceSandboxHandle {
     return sandbox.runCommand(inputOrCommand);
   }
 
-  async openSession(): Promise<WorkspaceSessionHandle> {
-    return this.#openSession();
+  async openSession(input?: { timeoutMs?: number }): Promise<WorkspaceSessionHandle> {
+    return this.#openSession(input);
   }
 
   async attachSession(): Promise<WorkspaceSessionHandle> {

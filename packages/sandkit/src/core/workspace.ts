@@ -3,6 +3,7 @@ import { assertWorkspacePolicyIsDurable } from "../policies/dsl.ts";
 import type {
   RunFinishInput as AdapterRunFinishInput,
   SandboxDriver,
+  SandboxCreateOptions,
   SandboxSessionLease,
   WorkspacePolicy,
   WorkspaceRecord,
@@ -23,6 +24,10 @@ import {
   describeWorkspacePolicyId,
   readWorkspacePolicy,
 } from "./workspace-policy.ts";
+import {
+  readWorkspaceSandboxConfig,
+  type WorkspaceSandboxConfig,
+} from "./workspace-sandbox-config.ts";
 import type { SandboxCommit, WorkspaceSandboxState } from "./workspace-state.ts";
 import {
   isWorkspaceSessionStateExpired,
@@ -93,6 +98,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   readonly #ctx: SandkitContext;
   #record: WorkspaceRecord;
   #sandboxState: WorkspaceSandboxState;
+  #sandboxConfig: WorkspaceSandboxConfig;
   #descriptor: WorkspaceDescriptor;
   #lazySandbox?: LazySandboxHandle;
 
@@ -101,6 +107,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     this.#record = record;
     this.#descriptor = this.resolveDescriptor(record);
     this.#sandboxState = readWorkspaceSandboxState(record);
+    this.#sandboxConfig = readWorkspaceSandboxConfig(record);
   }
 
   get id(): string {
@@ -115,7 +122,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     if (!this.#lazySandbox) {
       this.#lazySandbox = new LazySandboxHandle(
         () => this.createOrResumeSandboxForCommand(),
-        () => this.openSession(),
+        (input?: { timeoutMs?: number }) => this.openSession(input),
         () => this.attachSession(),
         () => this.getActiveLease(),
       );
@@ -163,14 +170,16 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     return this.createManagedSandbox(sandbox);
   }
 
-  async openSession(): Promise<WorkspaceSessionHandle> {
+  async openSession(input?: { timeoutMs?: number }): Promise<WorkspaceSessionHandle> {
     await this.resolveLatestWorkspace();
     if (await this.resolveAttachableSession()) {
       throw new Error("A sandbox session is already active for this workspace.");
     }
 
     const workspace = await this.resolveLatestWorkspace();
-    const sandbox = await this.resolveSandboxDriver(workspace);
+    const sandbox = await this.resolveSandboxDriver(workspace, {
+      timeoutMs: normalizeSessionTimeoutMs(input?.timeoutMs),
+    });
     const lease = await sandbox.getSessionLease();
     await this.persistSandboxState(transitionToSession(sandbox.id, lease));
 
@@ -267,22 +276,24 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     }
   }
 
-  private async resolveSandboxDriver(workspace: WorkspaceRecord): Promise<SandboxDriver> {
+  private async resolveSandboxDriver(
+    workspace: WorkspaceRecord,
+    overrides?: { timeoutMs?: number },
+  ): Promise<SandboxDriver> {
     const policy = readWorkspacePolicy(workspace, allowAll());
+    const options = this.makeSandboxDriverOptions(policy, overrides?.timeoutMs);
     const currentState = toDriverResumeState(this.#sandboxState);
     if (currentState) {
-      return this.#ctx.driverFactory.resumeSandbox(workspace, currentState, { policy });
+      return this.#ctx.driverFactory.resumeSandbox(workspace, currentState, options);
     }
 
     try {
       const setupState = await this.#readSharedSetupState();
       if (!setupState) {
-        return this.#bootstrapSetupState(workspace, policy);
+        return this.#bootstrapSetupState(workspace, options);
       }
 
-      return await this.#ctx.driverFactory.resumeSandbox(workspace, setupState, {
-        policy,
-      });
+      return await this.#ctx.driverFactory.resumeSandbox(workspace, setupState, options);
     } catch (error) {
       if (
         !this.#ctx.driverFactory.isSessionUnavailableError?.(error) &&
@@ -292,21 +303,22 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       }
 
       await this.#clearSharedSetupState();
-      return this.#bootstrapSetupState(workspace, policy);
+      return this.#bootstrapSetupState(workspace, options);
     }
   }
 
   async #bootstrapSetupState(
     workspace: WorkspaceRecord,
-    policy: WorkspacePolicy,
+    options: SandboxCreateOptions,
   ): Promise<SandboxDriver> {
     const setup = this.#ctx.options.setup;
     if (!setup) {
-      return this.#ctx.driverFactory.createSandbox(workspace, { policy });
+      return this.#ctx.driverFactory.createSandbox(workspace, options);
     }
 
-    const setupPolicy = setup.policy ?? policy;
+    const setupPolicy = setup.policy ?? options.policy;
     const sandbox = await this.#ctx.driverFactory.createSandbox(workspace, {
+      ...options,
       policy: setupPolicy,
     });
     const result = await sandbox.runCommand(setup.command, [...(setup.args ?? [])]);
@@ -319,9 +331,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     const setupState = await sandbox.snapshot();
     await this.#persistSharedSetupState(setupState);
 
-    return this.#ctx.driverFactory.resumeSandbox(workspace, setupState, {
-      policy,
-    });
+    return this.#ctx.driverFactory.resumeSandbox(workspace, setupState, options);
   }
 
   async #readSharedSetupState(): Promise<PersistedSandboxState | null> {
@@ -373,6 +383,28 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
         this.persistSandboxState(transitionAfterCommandCommit(commit, new Date().toISOString())),
       this.createRunLifecycle(sandbox),
     );
+  }
+
+  private makeSandboxDriverOptions(
+    policy: WorkspacePolicy,
+    timeoutMs: number | undefined,
+  ): SandboxCreateOptions {
+    const next: {
+      policy: WorkspacePolicy;
+      exposedPorts?: readonly number[];
+      timeoutMs?: number;
+    } = {
+      policy,
+    };
+
+    if (this.#sandboxConfig.exposedPorts && this.#sandboxConfig.exposedPorts.length > 0) {
+      next.exposedPorts = this.#sandboxConfig.exposedPorts;
+    }
+    if (timeoutMs !== undefined) {
+      next.timeoutMs = timeoutMs;
+    }
+
+    return next;
   }
 
   private createRunLifecycle(sandbox: SandboxDriver) {
@@ -428,6 +460,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
 
     this.updateFromRecord(latest);
     this.#sandboxState = readWorkspaceSandboxState(latest);
+    this.#sandboxConfig = readWorkspaceSandboxConfig(latest);
     if (isWorkspaceSessionStateExpired(this.#sandboxState)) {
       const result = await persistSandboxTransition(
         this.#ctx.adapter.workspaces,
@@ -436,6 +469,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       );
       this.updateFromRecord(result.record);
       this.#sandboxState = result.state;
+      this.#sandboxConfig = readWorkspaceSandboxConfig(result.record);
     }
 
     return this.#record;
@@ -454,6 +488,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   private updateFromRecord(record: WorkspaceRecord): void {
     this.#record = record;
     this.#descriptor = this.resolveDescriptor(record);
+    this.#sandboxConfig = readWorkspaceSandboxConfig(record);
   }
 
   private async createPolicySnapshot(policy: WorkspacePolicy) {
@@ -468,6 +503,18 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     const workspace = await this.resolveLatestWorkspace();
     return readWorkspacePolicy(workspace, allowAll());
   }
+}
+
+function normalizeSessionTimeoutMs(timeoutMs: number | undefined): number | undefined {
+  if (timeoutMs === undefined) {
+    return undefined;
+  }
+
+  if (!Number.isInteger(timeoutMs) || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("openSession timeoutMs must be a positive integer in milliseconds.");
+  }
+
+  return timeoutMs;
 }
 
 function workspaceStateIsSession(

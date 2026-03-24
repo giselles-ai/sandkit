@@ -71,7 +71,7 @@ const workspaceAdapter = createBunSqliteAdapter(database);
 const app = sandkit({
   database: workspaceAdapter,
   sandbox: vercelSandbox({
-    timeout: 60_000,
+    defaultTimeout: 60_000,
   }),
 });
 
@@ -93,6 +93,8 @@ console.log(result.stdout.trim());
 ```
 
 Set `VERCEL_OIDC_TOKEN` for local runs or `VERCEL_ACCESS_TOKEN` in CI before creating a Vercel-backed sandbox.
+
+Declare `exposedPorts` on `createWorkspace({ sandbox: ... })` only when you need a live session URL. `defaultTimeout` is the provider-level lease default; override a specific live session with `openSession({ timeoutMs })`.
 
 ## Setup bootstrap
 

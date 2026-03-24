@@ -439,6 +439,9 @@ function createRuntimeActions(runtime: OpenClawRuntime): Runtime {
     const workspace = await runtime.app.createWorkspace({
       id: runtime.config.workspaceId,
       name: "openclaw-demo",
+      sandbox: {
+        exposedPorts: [runtime.config.gatewayPort],
+      },
     });
     await emitStep({
       step: "prepare_workspace",
