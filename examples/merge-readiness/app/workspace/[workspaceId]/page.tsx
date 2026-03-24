@@ -83,8 +83,7 @@ export default function Page({ params }: { params: Promise<{ workspaceId: string
     setBusy(true);
     setError(null);
     try {
-      const rows = await loadWorkspace(workspaceId);
-      setWorkspace(rows);
+      setWorkspace(await loadWorkspace(workspaceId));
     } catch (loadError) {
       setError(asErrorMessage(loadError));
     } finally {

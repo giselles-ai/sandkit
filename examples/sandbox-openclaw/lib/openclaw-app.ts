@@ -72,12 +72,10 @@ async function createOpenClawRuntime(): Promise<OpenClawRuntime> {
 
   const db = drizzle(sqlite, { schema });
 
-  const adapter = drizzleAdapter(db, {
-    provider: "sqlite",
-  });
-
   const sandkit = createSandkit({
-    database: adapter,
+    database: drizzleAdapter(db, {
+      provider: "sqlite",
+    }),
     sandbox: vercelSandbox({
       runtime: "node24",
       defaultTimeout: SANDBOX_TIMEOUT_MS,

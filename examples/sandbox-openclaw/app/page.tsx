@@ -178,10 +178,9 @@ async function fetchRunStatus(runId: string): Promise<RunRouteResponse | null> {
     throw new Error(`Unable to read run status (${response.status}).`);
   }
 
-  const payload = (await response.json()) as { status: RunRouteResponse["status"] };
   return {
     runId,
-    status: payload.status,
+    status: ((await response.json()) as { status: RunRouteResponse["status"] }).status,
   };
 }
 
@@ -295,9 +294,9 @@ export default function Page() {
 
   const refresh = useCallback(async () => {
     try {
-      const payload = await fetchState();
-      setState(payload.state);
-      setError(payload.error ?? null);
+      const nextState = await fetchState();
+      setState(nextState.state);
+      setError(nextState.error ?? null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to load state.");
     }

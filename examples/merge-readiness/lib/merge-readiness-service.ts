@@ -280,11 +280,11 @@ type GitHubStatusResponse = {
 function resolveRuntime(): Promise<RuntimeFacade> {
   if (!runtimePromise) {
     runtimePromise = (async () => {
-      const runtime = await getMergeReadinessRuntime();
+      const { app, store, resetWorkspaceSandboxState } = await getMergeReadinessRuntime();
       return {
-        app: runtime.app,
-        store: runtime.store,
-        resetWorkspaceSandboxState: runtime.resetWorkspaceSandboxState,
+        app,
+        store,
+        resetWorkspaceSandboxState,
       };
     })();
   }
@@ -1245,8 +1245,9 @@ export async function resumeReview(reviewId: string): Promise<TopReviewSummary> 
 
 export async function listTopReviews(limit = DEFAULT_DASHBOARD_LIMIT): Promise<TopReviewSummary[]> {
   const runtime = await resolveRuntime();
-  const rows = await runtime.store.listReviews(limit);
-  return rows.map((row) => buildSummary(row, row.latestSession));
+  return (await runtime.store.listReviews(limit)).map((row) =>
+    buildSummary(row, row.latestSession),
+  );
 }
 
 export async function getReviewDetails(reviewId: string): Promise<MergeReadinessReviewDetails> {

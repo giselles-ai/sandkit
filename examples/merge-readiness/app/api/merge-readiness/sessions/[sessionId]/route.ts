@@ -62,12 +62,10 @@ export async function POST(
 
   try {
     if (action === "interrupt") {
-      const state = await interruptSession(sessionId);
-      return NextResponse.json(state);
+      return NextResponse.json(await interruptSession(sessionId));
     }
 
-    const state = await resumeSession(sessionId);
-    return NextResponse.json(state);
+    return NextResponse.json(await resumeSession(sessionId));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Action failed." },
