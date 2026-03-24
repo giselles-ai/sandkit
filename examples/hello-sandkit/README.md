@@ -14,6 +14,7 @@ This example intentionally does not use `openSession()` / `attachSession()`.
 - Creates a Vercel-backed workspace.
 - Runs one durable command that writes a file.
 - Runs another durable command that reads it back.
+
 This example demonstrates durable execution for the two commands within one run.
 
 ## Prerequisites
@@ -45,6 +46,7 @@ vercel link
 2. Pull local environment to create `.env.local` with project-backed OIDC credentials:
 
 The project can be empty and only exists as authentication context.
+
 `vercel link` connects this directory to a Vercel project, and `vercel env pull` writes local project-scoped credentials including `VERCEL_OIDC_TOKEN` into `.env.local`.
 
 ```sh
