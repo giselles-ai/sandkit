@@ -10,6 +10,16 @@
         "oxlint": "1.56.0",
       },
     },
+    "examples/hello-git": {
+      "name": "hello-git",
+      "version": "0.0.1",
+      "dependencies": {
+        "@giselles-ai/sandkit": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "examples/hello-sandkit": {
       "name": "hello-sandkit",
       "version": "0.0.1",
@@ -1038,6 +1048,8 @@
     "has-symbols": ["has-symbols@1.1.0", "", {}, "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ=="],
 
     "hasown": ["hasown@2.0.2", "", { "dependencies": { "function-bind": "^1.1.2" } }, "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ=="],
+
+    "hello-git": ["hello-git@workspace:examples/hello-git"],
 
     "hello-sandkit": ["hello-sandkit@workspace:examples/hello-sandkit"],
 
