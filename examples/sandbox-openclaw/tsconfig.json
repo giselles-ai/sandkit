@@ -14,7 +14,6 @@
     "jsx": "react-jsx",
     "incremental": true,
     "types": ["@types/bun", "node", "react", "react-dom"],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     },
