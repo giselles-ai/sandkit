@@ -101,12 +101,20 @@ Declare `exposedPorts` on `createWorkspace({ sandbox: ... })` only when you need
 
 ## Setup bootstrap
 
-Pass setup to `createSandkit({ setup })` to seed a shared durable state used by all workspaces on the same adapter.
-Each workspace starts from that shared bootstrap snapshot when no workspace-specific durable state exists.
-Sandkit persists one shared bootstrap state per adapter and bootstrap definition (command + args + explicit setup policy), runs setup once per unique bootstrap definition, and reuses the matching state for subsequent workspaces.
-If a shared bootstrap state is stale or unusable, Sandkit re-runs setup and persists a replacement.
-By default setup runs under the workspace policy; set `setup.policy` when bootstrap needs broader access than steady-state execution.
-Because setup becomes shared durable state, `setup.policy` must also be durable: explicit secret-bearing policies are rejected there.
+`setup` is the shared bootstrap definition, not the materialized artifact.
+It is optional.
+When `setup` is provided, it is the shared bootstrap command, args, and required durable `policy`.
+This produces adapter-scoped shared bootstrap state keyed by `adapter.id` + setup definition fingerprint.
+Multiple Sandkit instances using the same adapter and setup definition can reuse the same shared bootstrap state.
+
+`sandkit.bootstrap()` is an optional eager materialization step:
+
+- it creates shared bootstrap state if missing,
+- it leaves existing shared bootstrap state untouched,
+- it does not run a restore path to prove an existing shared bootstrap state is still usable.
+
+Without `bootstrap()`, shared setup is still materialized lazily on first workspace use (first `runCommand(...)` or `openSession(...)` that needs it).
+Stale or unusable shared bootstrap artifacts are detected and rebuilt in those workspace flows, not by `bootstrap()` alone.
 
 `setup` durability is adapter-backed. With a persistent adapter such as Bun SQLite or Drizzle, the shared bootstrap survives process restarts. With the default in-memory adapter, it does not.
 
@@ -123,6 +131,9 @@ const sandkit = createSandkit({
   },
 });
 
+await sandkit.bootstrap();
+
+// Optional: omit bootstrap() and let setup materialize on first workspace use.
 const workspace = await sandkit.createWorkspace({
   name: "bootstrapped-workspace",
 });
