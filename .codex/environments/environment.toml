@@ -4,7 +4,12 @@ name = "sandbox-devkit"
 
 [setup]
 script = '''
-cp "${CODEX_SOURCE_TREE_PATH}/.mise.local.toml" "${CODEX_WORKTREE_PATH}/.mise.local.toml"
+if [ -f "${CODEX_SOURCE_TREE_PATH}/.mise.local.toml" ]; then
+  cp "${CODEX_SOURCE_TREE_PATH}/.mise.local.toml" "${CODEX_WORKTREE_PATH}/.mise.local.toml"
+fi
+if [ -f "${CODEX_SOURCE_TREE_PATH}/.env.local" ]; then
+  cp "${CODEX_SOURCE_TREE_PATH}/.env.local" "${CODEX_WORKTREE_PATH}/.env.local"
+fi
 mise trust
 bun install
 '''
