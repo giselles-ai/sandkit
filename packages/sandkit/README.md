@@ -160,6 +160,7 @@ npx @giselles-ai/sandkit generate
 
 ## Examples
 
+- `examples/workflow-hello-git`
 - `examples/sandbox-openclaw`
 - `smoke/drizzle-sample`
 
