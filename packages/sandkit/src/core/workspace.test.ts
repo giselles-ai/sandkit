@@ -15,6 +15,8 @@ import type {
 import { Sandkit, createSandkit } from "./sandkit.ts";
 import { sharedSetupStateId } from "./workspace.ts";
 
+const bootstrapPolicy = allowAll();
+
 interface CaptureCall {
   options: {
     policyMode: WorkspacePolicy["mode"];
@@ -208,6 +210,82 @@ function createSetupRecoveryDriverFactory(): SandboxDriverFactory {
   };
 }
 
+function createBootstrapRecorderDriverFactory() {
+  let createCount = 0;
+  let resumeCount = 0;
+  let snapshotCount = 0;
+
+  const factory: SandboxDriverFactory = {
+    async createSandbox() {
+      createCount += 1;
+      return {
+        id: `bootstrap-create-${createCount}`,
+        provider: "bootstrap-recorder",
+        async applyPolicy() {},
+        async getSessionLease() {
+          const observedAt = new Date().toISOString();
+          return {
+            sandboxId: `bootstrap-create-${createCount}`,
+            observedAt,
+            expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
+          };
+        },
+        async runCommand(): Promise<CommandResult> {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        async snapshot() {
+          snapshotCount += 1;
+          return {
+            kind: "bootstrap-recorder",
+            sessionId: `bootstrap-create-${createCount}`,
+            state: { files: {} },
+          };
+        },
+      };
+    },
+    async resumeSandbox() {
+      resumeCount += 1;
+      return {
+        id: `bootstrap-resume-${resumeCount}`,
+        provider: "bootstrap-recorder",
+        async applyPolicy() {},
+        async getSessionLease() {
+          const observedAt = new Date().toISOString();
+          return {
+            sandboxId: `bootstrap-resume-${resumeCount}`,
+            observedAt,
+            expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
+          };
+        },
+        async runCommand(): Promise<CommandResult> {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        async snapshot() {
+          snapshotCount += 1;
+          return {
+            kind: "bootstrap-recorder",
+            sessionId: `bootstrap-resume-${resumeCount}`,
+            state: { files: {} },
+          };
+        },
+      };
+    },
+  };
+
+  return {
+    factory,
+    get createCount() {
+      return createCount;
+    },
+    get resumeCount() {
+      return resumeCount;
+    },
+    get snapshotCount() {
+      return snapshotCount;
+    },
+  };
+}
+
 function createMockSandkit(input: Omit<SandkitOptions, "sandbox"> = {}): Sandkit {
   return createSandkit({
     ...input,
@@ -306,11 +384,100 @@ describe("Workspace session policy lifecycle", () => {
 });
 
 describe("Workspace setup lifecycle", () => {
+  test("bootstrap() materializes shared setup state when missing", async () => {
+    const sandkit = createMockSandkit({
+      setup: {
+        command: "echo",
+        args: ["bootstrapped", ">", "hello.txt"],
+        policy: bootstrapPolicy,
+      },
+    });
+    const sharedStateId = sharedSetupStateId(
+      sandkit.context.adapter.id,
+      sandkit.context.options.setup,
+    );
+    expect(await sandkit.context.adapter.setupStates.getSetupState(sharedStateId)).toBeNull();
+
+    await sandkit.bootstrap();
+
+    const sharedState = await sandkit.context.adapter.setupStates.getSetupState(sharedStateId);
+    expect(sharedState).toBeTruthy();
+    const workspace = await sandkit.createWorkspace({ id: "bootstrap-run-command" });
+    const result = await workspace.sandbox.runCommand({
+      command: "cat",
+      args: ["hello.txt"],
+    });
+    expect(result.stdout.trim()).toBe("bootstrapped");
+  });
+
+  test("bootstrap() leaves existing shared setup state unchanged", async () => {
+    const sandkit = createSandkit({
+      sandbox: internalSandboxProvider(createSetupRecoveryDriverFactory(), "setup-recovery-test"),
+      setup: {
+        command: "echo",
+        args: ["bootstrapped", ">", "hello.txt"],
+        policy: bootstrapPolicy,
+      },
+    });
+    await sandkit.context.adapter.setupStates.putSetupState({
+      id: sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup),
+      state: {
+        kind: "stale-setup-recovery",
+        sessionId: "stale-setup",
+      },
+    });
+
+    await sandkit.bootstrap();
+
+    const reloaded = await sandkit.context.adapter.setupStates.getSetupState(
+      sharedSetupStateId(sandkit.context.adapter.id, sandkit.context.options.setup),
+    );
+    expect(reloaded?.state.kind).toBe("stale-setup-recovery");
+  });
+
+  test("bootstrap() is no-op when setup is not configured", async () => {
+    const sandkit = createMockSandkit();
+    await expect(sandkit.bootstrap()).resolves.toBeUndefined();
+  });
+
+  test("bootstrap() does not rerun setup when shared state already exists", async () => {
+    const recorder = createBootstrapRecorderDriverFactory();
+    const sandkit = createSandkit({
+      sandbox: internalSandboxProvider(recorder.factory, "bootstrap-recorder"),
+      setup: {
+        command: "echo",
+        args: ["hello"],
+        policy: bootstrapPolicy,
+      },
+    });
+
+    await sandkit.bootstrap();
+    await sandkit.bootstrap();
+
+    expect(recorder.createCount).toBe(1);
+    expect(recorder.resumeCount).toBe(0);
+    expect(recorder.snapshotCount).toBe(1);
+  });
+
+  test("requires setup.policy for bootstrap and workspace setup execution", async () => {
+    const sandkit = createSandkit({
+      sandbox: mockSandbox(),
+      // @ts-expect-error Exercise runtime validation of required setup.policy.
+      setup: {
+        command: "echo",
+        args: ["hello"],
+      },
+    });
+
+    await expect(sandkit.bootstrap()).rejects.toThrow(/Shared setup policy is required/);
+  });
+
   test("runs setup before the first durable command and does not rerun it once state exists", async () => {
     const sandkit = createMockSandkit({
       setup: {
         command: "echo",
         args: ["hello", ">", "hello.txt"],
+        policy: bootstrapPolicy,
       },
     });
     const workspace = await sandkit.createWorkspace({
@@ -347,6 +514,7 @@ describe("Workspace setup lifecycle", () => {
       setup: {
         command: "echo",
         args: ["ready", ">", "hello.txt"],
+        policy: bootstrapPolicy,
       },
     });
     const workspace = await sandkit.createWorkspace();
@@ -377,6 +545,7 @@ describe("Workspace setup lifecycle", () => {
     const sandkit = createMockSandkit({
       setup: {
         command: "unsupported",
+        policy: bootstrapPolicy,
       },
     });
     const workspace = await sandkit.createWorkspace();
@@ -412,6 +581,7 @@ describe("Workspace setup lifecycle", () => {
       setup: {
         command: "echo",
         args: ["bootstrapped", ">", "hello.txt"],
+        policy: bootstrapPolicy,
       },
     });
     const workspace = await sandkit.createWorkspace();
@@ -445,6 +615,7 @@ describe("Workspace setup lifecycle", () => {
       setup: {
         command: "echo",
         args: ["first", ">", "hello.txt"],
+        policy: bootstrapPolicy,
       },
     });
     const second = createMockSandkit({
@@ -452,6 +623,7 @@ describe("Workspace setup lifecycle", () => {
       setup: {
         command: "echo",
         args: ["second", ">", "hello.txt"],
+        policy: bootstrapPolicy,
       },
     });
 
@@ -490,6 +662,7 @@ describe("Workspace setup lifecycle", () => {
       setup: {
         command: "echo",
         args: ["shared", ">", "hello.txt"],
+        policy: bootstrapPolicy,
       },
     });
     const second = createMockSandkit({
@@ -497,7 +670,13 @@ describe("Workspace setup lifecycle", () => {
       setup: {
         command: "echo",
         args: ["shared", ">", "hello.txt"],
-        policy: allowAll(),
+        policy: allowServices([
+          {
+            id: "bootstrap-policy",
+            name: "Bootstrap Policy",
+            domains: ["bootstrap.example.com"],
+          },
+        ]),
       },
     });
 

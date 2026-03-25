@@ -6,11 +6,13 @@ import type {
   SandboxCreateOptions,
   SandboxSessionLease,
   WorkspacePolicy,
+  SharedSetup,
   WorkspaceRecord,
   WorkspaceSandboxLease,
   PersistedSandboxState,
 } from "../types.ts";
 import type { SandkitContext } from "./context.ts";
+import { createId } from "./ids.ts";
 import {
   LazySandboxHandle,
   ManagedSandbox,
@@ -44,27 +46,22 @@ import {
 function setupStateFingerprint(
   command: string,
   args: readonly string[],
-  policy: WorkspacePolicy | undefined,
+  policy: WorkspacePolicy,
 ): string {
   return encodeURIComponent(
     JSON.stringify({
       command,
       args,
-      policy: policy
-        ? {
-            id: describeWorkspacePolicyId(policy),
-            config: asPolicySnapshotConfig(policy),
-          }
-        : null,
+      policy: {
+        id: describeWorkspacePolicyId(policy),
+        config: asPolicySnapshotConfig(policy),
+      },
     }),
   );
 }
 
-export const sharedSetupStateId = (
-  adapterId: string,
-  setup: { command: string; args?: readonly string[]; policy?: WorkspacePolicy } | undefined,
-): string => {
-  if (setup?.policy) {
+export const sharedSetupStateId = (adapterId: string, setup: SharedSetup | undefined): string => {
+  if (setup) {
     assertWorkspacePolicyIsDurable(setup.policy);
   }
   const fingerprint = setup
@@ -72,6 +69,172 @@ export const sharedSetupStateId = (
     : "no-bootstrap";
   return `${adapterId}:shared-bootstrap:${fingerprint}`;
 };
+
+function sharedSetupRecordId(ctx: SandkitContext): string | null {
+  if (!ctx.options.setup) {
+    return null;
+  }
+
+  return sharedSetupStateId(ctx.adapter.id, ctx.options.setup);
+}
+
+async function readSharedSetupState(ctx: SandkitContext): Promise<PersistedSandboxState | null> {
+  if (!ctx.options.setup) {
+    return null;
+  }
+
+  const sharedSetupId = sharedSetupRecordId(ctx);
+  if (!sharedSetupId) {
+    return null;
+  }
+
+  const setupState = await ctx.adapter.setupStates.getSetupState(sharedSetupId);
+  return setupState ? setupState.state : null;
+}
+
+async function persistSharedSetupState(
+  ctx: SandkitContext,
+  state: PersistedSandboxState,
+): Promise<void> {
+  const sharedSetupId = sharedSetupRecordId(ctx);
+  if (!sharedSetupId) {
+    return;
+  }
+
+  await ctx.adapter.setupStates.putSetupState({
+    id: sharedSetupId,
+    state: {
+      kind: state.kind,
+      sessionId: state.sessionId,
+      state: state.state,
+    },
+  });
+}
+
+async function clearSharedSetupState(ctx: SandkitContext): Promise<void> {
+  const sharedSetupId = sharedSetupRecordId(ctx);
+  if (!sharedSetupId) {
+    return;
+  }
+
+  await ctx.adapter.setupStates.deleteSetupState(sharedSetupId);
+}
+
+function isRecoverableSetupStateError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.message.includes("Sandkit durable state corruption") &&
+    error.message.includes("sandkit_setup_states")
+  );
+}
+
+function assertSharedSetupAndPolicy(ctx: SandkitContext): SharedSetup {
+  if (!ctx.options.setup) {
+    throw new Error("Sandkit setup is not configured.");
+  }
+
+  const { setup } = ctx.options;
+  if (!setup.policy) {
+    throw new Error("Shared setup policy is required.");
+  }
+
+  return setup;
+}
+
+async function bootstrapSharedSetupState(
+  ctx: SandkitContext,
+  workspace: WorkspaceRecord,
+  options: SandboxCreateOptions,
+): Promise<PersistedSandboxState> {
+  const setup = assertSharedSetupAndPolicy(ctx);
+  const sandbox = await ctx.driverFactory.createSandbox(workspace, {
+    ...options,
+    policy: setup.policy,
+  });
+  const result = await sandbox.runCommand(setup.command, [...(setup.args ?? [])]);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Workspace setup failed with exit code ${result.exitCode}. ${result.stderr.trim()}`.trim(),
+    );
+  }
+
+  const state = await sandbox.snapshot();
+  await persistSharedSetupState(ctx, state);
+  return state;
+}
+
+async function resolveSharedSetupState(
+  ctx: SandkitContext,
+  workspace: WorkspaceRecord,
+  options: SandboxCreateOptions,
+): Promise<PersistedSandboxState | null> {
+  if (!ctx.options.setup) {
+    return null;
+  }
+  assertSharedSetupAndPolicy(ctx);
+
+  try {
+    const setupState = await readSharedSetupState(ctx);
+    if (!setupState) {
+      return bootstrapSharedSetupState(ctx, workspace, options);
+    }
+
+    return setupState;
+  } catch (error) {
+    if (!isRecoverableSetupStateError(error)) {
+      throw error;
+    }
+
+    await clearSharedSetupState(ctx);
+    return bootstrapSharedSetupState(ctx, workspace, options);
+  }
+}
+
+// Internal helper: build a transient, non-user workspace record for executing a missing
+// shared bootstrap command. This record is never persisted and is intentionally opaque.
+function createInternalSharedBootstrapWorkspaceRecord(): WorkspaceRecord {
+  const now = new Date().toISOString();
+  return {
+    id: createId("sandkit-internal-bootstrap"),
+    status: "inactive",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export async function bootstrapSharedSetup(ctx: SandkitContext): Promise<void> {
+  if (!ctx.options.setup) {
+    return;
+  }
+  const setup = assertSharedSetupAndPolicy(ctx);
+  const sharedSetupId = sharedSetupRecordId(ctx);
+  if (!sharedSetupId) {
+    return;
+  }
+  const workspace = createInternalSharedBootstrapWorkspaceRecord();
+  const setupOptions: SandboxCreateOptions = {
+    policy: setup.policy,
+  };
+
+  let setupState: PersistedSandboxState | null;
+  try {
+    setupState = await readSharedSetupState(ctx);
+  } catch (error) {
+    if (!isRecoverableSetupStateError(error)) {
+      throw error;
+    }
+
+    await clearSharedSetupState(ctx);
+    setupState = null;
+  }
+
+  if (!setupState) {
+    await bootstrapSharedSetupState(ctx, workspace, setupOptions);
+  }
+}
 
 export interface PublicWorkspaceHandle {
   readonly id: string;
@@ -287,92 +450,25 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
       return this.#ctx.driverFactory.resumeSandbox(workspace, currentState, options);
     }
 
-    try {
-      const setupState = await this.#readSharedSetupState();
-      if (!setupState) {
-        return this.#bootstrapSetupState(workspace, options);
-      }
+    const setupState = await resolveSharedSetupState(this.#ctx, workspace, options);
+    if (!setupState) {
+      return this.#ctx.driverFactory.createSandbox(workspace, options);
+    }
 
+    try {
       return await this.#ctx.driverFactory.resumeSandbox(workspace, setupState, options);
     } catch (error) {
       if (
         !this.#ctx.driverFactory.isSessionUnavailableError?.(error) &&
-        !this.#isRecoverableSetupStateError(error)
+        !isRecoverableSetupStateError(error)
       ) {
         throw error;
       }
 
-      await this.#clearSharedSetupState();
-      return this.#bootstrapSetupState(workspace, options);
+      await clearSharedSetupState(this.#ctx);
+      const rerunSetupState = await bootstrapSharedSetupState(this.#ctx, workspace, options);
+      return this.#ctx.driverFactory.resumeSandbox(workspace, rerunSetupState, options);
     }
-  }
-
-  async #bootstrapSetupState(
-    workspace: WorkspaceRecord,
-    options: SandboxCreateOptions,
-  ): Promise<SandboxDriver> {
-    const setup = this.#ctx.options.setup;
-    if (!setup) {
-      return this.#ctx.driverFactory.createSandbox(workspace, options);
-    }
-
-    const setupPolicy = setup.policy ?? options.policy;
-    const sandbox = await this.#ctx.driverFactory.createSandbox(workspace, {
-      ...options,
-      policy: setupPolicy,
-    });
-    const result = await sandbox.runCommand(setup.command, [...(setup.args ?? [])]);
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Workspace setup failed with exit code ${result.exitCode}. ${result.stderr.trim()}`.trim(),
-      );
-    }
-
-    const setupState = await sandbox.snapshot();
-    await this.#persistSharedSetupState(setupState);
-
-    return this.#ctx.driverFactory.resumeSandbox(workspace, setupState, options);
-  }
-
-  async #readSharedSetupState(): Promise<PersistedSandboxState | null> {
-    if (!this.#ctx.options.setup) {
-      return null;
-    }
-
-    const setupState = await this.#ctx.adapter.setupStates.getSetupState(
-      this.#sharedSetupStateId(),
-    );
-    return setupState ? setupState.state : null;
-  }
-
-  async #persistSharedSetupState(state: PersistedSandboxState): Promise<void> {
-    await this.#ctx.adapter.setupStates.putSetupState({
-      id: this.#sharedSetupStateId(),
-      state: {
-        kind: state.kind,
-        sessionId: state.sessionId,
-        state: state.state,
-      },
-    });
-  }
-
-  async #clearSharedSetupState(): Promise<void> {
-    await this.#ctx.adapter.setupStates.deleteSetupState(this.#sharedSetupStateId());
-  }
-
-  #sharedSetupStateId(): string {
-    return sharedSetupStateId(this.#ctx.adapter.id, this.#ctx.options.setup);
-  }
-
-  #isRecoverableSetupStateError(error: unknown): boolean {
-    if (!(error instanceof Error)) {
-      return false;
-    }
-
-    return (
-      error.message.includes("Sandkit durable state corruption") &&
-      error.message.includes("sandkit_setup_states")
-    );
   }
 
   private createManagedSandbox(sandbox: SandboxDriver): ManagedSandbox {

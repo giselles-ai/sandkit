@@ -6,7 +6,7 @@ import {
   normalizeWorkspaceSandboxCreateConfig,
   removeWorkspaceSandboxConfigMetadata,
 } from "./workspace-sandbox-config.ts";
-import { type PublicWorkspaceHandle, WorkspaceHandle } from "./workspace.ts";
+import { bootstrapSharedSetup, type PublicWorkspaceHandle, WorkspaceHandle } from "./workspace.ts";
 
 export class Sandkit {
   readonly #ctx: SandkitContext;
@@ -17,6 +17,10 @@ export class Sandkit {
 
   get context(): SandkitContext {
     return this.#ctx;
+  }
+
+  async bootstrap(): Promise<void> {
+    await bootstrapSharedSetup(this.#ctx);
   }
 
   async createWorkspace(input: WorkspaceCreateOptions = {}): Promise<PublicWorkspaceHandle> {

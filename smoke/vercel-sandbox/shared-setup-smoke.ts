@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { createSandkit } from "@giselles-ai/sandkit";
+import { allowAll, createSandkit } from "@giselles-ai/sandkit";
 import type {
   CommandResult,
   PersistedSandboxState,
@@ -254,8 +254,28 @@ async function runSmoke(): Promise<void> {
       setup: {
         command: "bootstrap",
         args: [],
+        policy: allowAll(),
       },
     });
+
+    await sandkit.bootstrap();
+    await sandkit.bootstrap();
+
+    const setupStateRowsAfterBootstrap = sqlite
+      .query<{ count: number }, []>("SELECT COUNT(*) as count FROM sandkit_setup_states")
+      .get()?.count;
+
+    if (setupStateRowsAfterBootstrap !== 1) {
+      throw new Error(
+        `Smoke failed: expected exactly one shared setup state row after bootstrap(), got ${setupStateRowsAfterBootstrap ?? 0}.`,
+      );
+    }
+
+    if (counter.bootstrapRuns !== 1) {
+      throw new Error(
+        `Smoke failed: expected bootstrap() to materialize shared setup once, got ${counter.bootstrapRuns}.`,
+      );
+    }
 
     const firstWorkspace = await sandkit.createWorkspace({ id: "workspace-a" });
     const secondWorkspace = await sandkit.createWorkspace({ id: "workspace-b" });

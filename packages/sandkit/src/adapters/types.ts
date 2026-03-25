@@ -22,7 +22,7 @@ export interface SharedSetup {
    * Shared setup state is durable and reused across workspaces, so this policy
    * must also be durable. Explicit secret-bearing policies are rejected.
    */
-  readonly policy?: WorkspacePolicy;
+  readonly policy: WorkspacePolicy;
 }
 
 /**
