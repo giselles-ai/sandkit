@@ -63,23 +63,6 @@ async function writeResultEvent(
   writer.releaseLock();
 }
 
-async function writeErrorEvent(index: number, code: string, message: string): Promise<void> {
-  "use step";
-
-  const writable = getWritable<string>();
-  const writer = writable.getWriter();
-  await writer.write(
-    `${JSON.stringify(
-      createWorkflowHelloGitRunEvent(index, {
-        type: "error",
-        code,
-        message,
-      }),
-    )}\n`,
-  );
-  writer.releaseLock();
-}
-
 async function closeEventWriter(): Promise<void> {
   "use step";
   await getWritable<string>().close();
@@ -125,24 +108,30 @@ async function resolveWorkspace(repo: string) {
   }
 }
 
-async function ensureWorkspace(repo: string): Promise<{ workspaceId: string }> {
+async function createWorkspace(repo: string): Promise<{ workspaceId: string }> {
   "use step";
 
   requireGithubToken();
+  await writeStepEvent(0, "ensure_workspace", "started", "Resolving durable workspace...");
   const workspace = await resolveWorkspace(repo);
+  await writeStepEvent(1, "ensure_workspace", "completed", `Workspace ${workspace.id} ready.`);
   return {
     workspaceId: workspace.id,
   };
 }
 
-async function ensureRepositoryClone(repo: string): Promise<boolean> {
+async function getRepository(repo: string): Promise<{ clonePerformed: boolean }> {
   "use step";
 
   requireGithubToken();
+  await writeStepEvent(2, "clone_repository", "started", "Cloning repository if needed...");
   const workspace = await resolveWorkspace(repo);
   const existing = await workspace.sandbox.runCommand("test", ["-d", "repo"]);
   if (existing.exitCode === 0) {
-    return false;
+    await writeStepEvent(3, "clone_repository", "completed", "Existing checkout reused.");
+    return {
+      clonePerformed: false,
+    };
   }
 
   const clone = await workspace.sandbox.runCommand({
@@ -153,12 +142,21 @@ async function ensureRepositoryClone(repo: string): Promise<boolean> {
   if (clone.exitCode !== 0) {
     throw new Error(`Failed to clone https://github.com/${repo}: ${clone.stderr}`);
   }
-  return true;
+  await writeStepEvent(3, "clone_repository", "completed", "Repository cloned into workspace.");
+  return {
+    clonePerformed: true,
+  };
 }
 
 async function readRepositoryStatus(repo: string): Promise<{ status: string; files: string }> {
   "use step";
   requireGithubToken();
+  await writeStepEvent(
+    4,
+    "read_repository_status",
+    "started",
+    "Reading git status and repository contents...",
+  );
   const workspace = await resolveWorkspace(repo);
   const status = await workspace.sandbox.runCommand("git", [
     "-C",
@@ -176,10 +174,12 @@ async function readRepositoryStatus(repo: string): Promise<{ status: string; fil
     throw new Error(`Failed to list repository files: ${list.stderr}`);
   }
 
-  return {
+  const details = {
     status: status.stdout || "",
     files: list.stdout || "",
   };
+  await writeStepEvent(5, "read_repository_status", "completed", "Repository inspection complete.");
+  return details;
 }
 
 function normalizeInput(input: WorkflowHelloGitInput): WorkflowHelloGitInput {
@@ -189,69 +189,29 @@ function normalizeInput(input: WorkflowHelloGitInput): WorkflowHelloGitInput {
   };
 }
 
-async function run(input: WorkflowHelloGitInput): Promise<WorkflowHelloGitFinalOutput> {
-  const normalized = normalizeInput(input);
-
-  try {
-    await writeStepEvent(0, "ensure_workspace", "started", "Resolving durable workspace...");
-    const workspace = await ensureWorkspace(normalized.repo);
-    await writeStepEvent(
-      1,
-      "ensure_workspace",
-      "completed",
-      `Workspace ${workspace.workspaceId} ready.`,
-    );
-
-    await writeStepEvent(2, "clone_repository", "started", "Cloning repository if needed...");
-    const clonePerformed = await ensureRepositoryClone(normalized.repo);
-    await writeStepEvent(
-      3,
-      "clone_repository",
-      "completed",
-      clonePerformed ? "Repository cloned into workspace." : "Existing checkout reused.",
-    );
-
-    await writeStepEvent(
-      4,
-      "read_repository_status",
-      "started",
-      "Reading git status and repository contents...",
-    );
-    const details = await readRepositoryStatus(normalized.repo);
-    await writeStepEvent(
-      5,
-      "read_repository_status",
-      "completed",
-      "Repository inspection complete.",
-    );
-
-    const finalOutput: WorkflowHelloGitFinalOutput = {
-      kind: "helloGit",
-      workspaceId: workspace.workspaceId,
-      repo: normalized.repo,
-      clonePerformed,
-      status: details.status,
-      files: details.files,
-      requestedAt: normalized.requestedAt!,
-    };
-
-    await writeResultEvent(6, finalOutput);
-    return finalOutput;
-  } catch (error) {
-    await writeErrorEvent(
-      6,
-      "hello_git_failed",
-      error instanceof Error ? error.message : String(error),
-    );
-    throw error;
-  } finally {
-    await closeEventWriter();
-  }
-}
-
 export async function runHelloGitWorkflow(
   input: WorkflowHelloGitInput,
 ): Promise<WorkflowHelloGitFinalOutput> {
   "use workflow";
-  return run(input);
+
+  const normalized = normalizeInput(input);
+  const repo = normalized.repo;
+  const requestedAt = normalized.requestedAt!;
+  const workspace = await createWorkspace(repo);
+  const repository = await getRepository(repo);
+  const details = await readRepositoryStatus(repo);
+
+  const finalOutput: WorkflowHelloGitFinalOutput = {
+    kind: "helloGit",
+    workspaceId: workspace.workspaceId,
+    repo,
+    clonePerformed: repository.clonePerformed,
+    status: details.status,
+    files: details.files,
+    requestedAt,
+  };
+
+  await writeResultEvent(6, finalOutput);
+  await closeEventWriter();
+  return finalOutput;
 }
