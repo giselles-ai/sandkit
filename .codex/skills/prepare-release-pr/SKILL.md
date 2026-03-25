@@ -35,9 +35,9 @@ Always use this structure:
 ```md
 ## Overview
 
-- `<package>@<version>` の release 準備
-- bump 種別: `<patch|minor>`
-- 判断理由:
+- Preparing release for `<package>@<version>`
+- Proposed bump: `<patch|minor>`
+- Reasoning:
   - ...
   - ...
 
@@ -49,7 +49,7 @@ Always use this structure:
 
 Rules:
 
-- Write the body in Japanese.
+- Write the body in English.
 - Keep it short and reviewable.
 - Prefer PR references over raw commit lists.
 - Include only the PRs that materially explain the release.

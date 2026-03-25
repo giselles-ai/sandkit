@@ -6,9 +6,10 @@ on:
       pull_request_number:
         description: Merged release PR number
         required: true
-        type: string
+        type: number
 
 permissions:
+  actions: write
   contents: write
   id-token: write
   pull-requests: read
@@ -17,7 +18,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     concurrency:
-      group: publish-${{ github.event.inputs.pull_request_number }}
+      group: publish-${{ inputs.pull_request_number }}
       cancel-in-progress: false
     steps:
       - name: Create access token for GitHub App
@@ -38,10 +39,23 @@ jobs:
       - name: Load release PR metadata
         id: pr
         uses: actions/github-script@v7
+        env:
+          WORKFLOW_DISPATCH_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            const prNumber = Number(core.getInput("pull_request_number", {required: true}));
+            const pullRequestInput = process.env.WORKFLOW_DISPATCH_PULL_REQUEST_NUMBER;
+            if (!pullRequestInput) {
+              core.setFailed("workflow_dispatch input pull_request_number is required.");
+              return;
+            }
+
+            if (!Number.isInteger(Number(pullRequestInput)) || Number(pullRequestInput) <= 0) {
+              core.setFailed("workflow_dispatch input pull_request_number must be a positive integer.");
+              return;
+            }
+
+            const prNumber = Number(pullRequestInput.trim());
             const {data: pr} = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -76,10 +90,9 @@ jobs:
               return;
             }
 
-            const packageName = releaseTitle.slice(0, separatorIndex);
-            const version = releaseTitle.slice(separatorIndex + 1);
-
-            if (!packageName || !version) {
+            const expectedReleaseIdentity = releaseTitle.slice(0, separatorIndex);
+            const expectedReleaseVersion = releaseTitle.slice(separatorIndex + 1);
+            if (!expectedReleaseIdentity || !expectedReleaseVersion) {
               core.setFailed(`Could not parse package name and version from "${pr.title}".`);
               return;
             }
@@ -90,10 +103,9 @@ jobs:
             }
 
             core.setOutput("merge_sha", pr.merge_commit_sha);
-            core.setOutput("package_name", packageName);
-            core.setOutput("version", version);
             core.setOutput("release_title", releaseTitle);
-            core.setOutput("tag_name", releaseTitle);
+            core.setOutput("expected_release_identity", expectedReleaseIdentity);
+            core.setOutput("expected_release_version", expectedReleaseVersion);
             core.setOutput("release_body", pr.body);
             core.setOutput("pr_number", String(pr.number));
             core.setOutput("pr_url", pr.html_url);
@@ -117,49 +129,80 @@ jobs:
 
       - name: Resolve package directory
         id: package
+        uses: actions/github-script@v7
         env:
-          PACKAGE_NAME: ${{ steps.pr.outputs.package_name }}
-          EXPECTED_VERSION: ${{ steps.pr.outputs.version }}
-        run: |
-          node <<'NODE'
-          const fs = require("node:fs");
-          const path = require("node:path");
+          RELEASE_TITLE: ${{ steps.pr.outputs.release_title }}
+          EXPECTED_RELEASE_IDENTITY: ${{ steps.pr.outputs.expected_release_identity }}
+          EXPECTED_RELEASE_VERSION: ${{ steps.pr.outputs.expected_release_version }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const releaseTitle = process.env.RELEASE_TITLE || "";
+            const expectedIdentity = process.env.EXPECTED_RELEASE_IDENTITY;
+            const expectedVersion = process.env.EXPECTED_RELEASE_VERSION;
+            const prNumber = Number(process.env.PR_NUMBER);
 
-          const packageName = process.env.PACKAGE_NAME;
-          const expectedVersion = process.env.EXPECTED_VERSION;
-          const packagesDir = path.join(process.cwd(), "packages");
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
 
-          const candidates = [];
-          for (const entry of fs.readdirSync(packagesDir, {withFileTypes: true})) {
-            if (!entry.isDirectory()) continue;
-            const packageJsonPath = path.join(packagesDir, entry.name, "package.json");
-            if (!fs.existsSync(packageJsonPath)) continue;
-            const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-            if (pkg.name === packageName) {
-              candidates.push({
-                dir: path.join("packages", entry.name),
-                version: pkg.version,
-              });
+            const packageJsonFiles = [];
+            for (const file of files) {
+              const match = file.filename?.match(/^packages\/([^/]+)\/package\.json$/);
+              if (match) {
+                packageJsonFiles.push(match[1]);
+              }
             }
-          }
 
-          if (candidates.length !== 1) {
-            throw new Error(`Expected exactly one package directory for ${packageName}, found ${candidates.length}.`);
-          }
+            const uniquePackageDirs = [...new Set(packageJsonFiles)];
+            if (uniquePackageDirs.length === 0) {
+              core.setFailed(`No package.json files changed in PR #${prNumber}.`);
+              return;
+            }
 
-          const target = candidates[0];
-          if (target.version !== expectedVersion) {
-            throw new Error(`package.json version ${target.version} does not match PR title version ${expectedVersion}.`);
-          }
+            if (uniquePackageDirs.length > 1) {
+              core.setFailed(`Multiple package.json files changed in PR #${prNumber}: ${uniquePackageDirs.join(", ")}.`);
+              return;
+            }
 
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `package_dir=${target.dir}\n`);
-          NODE
+            const packageDir = uniquePackageDirs[0];
+            const packageJsonPath = path.join(process.cwd(), "packages", packageDir, "package.json");
+            if (!fs.existsSync(packageJsonPath)) {
+              core.setFailed(`Expected package manifest at ${packageJsonPath} after checking out merge commit.`);
+              return;
+            }
+
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+            const packageName = packageJson.name;
+            const packageVersion = packageJson.version;
+
+            const expectedTag = `${expectedIdentity}@${expectedVersion}`;
+            const releaseTag = `${packageName}@${packageVersion}`;
+            if (expectedTag !== releaseTag) {
+              core.setFailed(`PR title requires ${expectedTag}, but merge commit package manifest has ${releaseTag}.`);
+              return;
+            }
+
+            if (releaseTag !== releaseTitle) {
+              core.setFailed(`Release title ${releaseTitle} does not match merge commit identity ${releaseTag}.`);
+              return;
+            }
+
+            core.setOutput("package_dir", path.join("packages", packageDir));
+            core.setOutput("package_name", packageName);
+            core.setOutput("version", packageVersion);
+            core.setOutput("release_tag_name", releaseTag);
 
       - name: Check npm publication state
         id: npm
         env:
-          PACKAGE_NAME: ${{ steps.pr.outputs.package_name }}
-          VERSION: ${{ steps.pr.outputs.version }}
+          PACKAGE_NAME: ${{ steps.package.outputs.package_name }}
+          VERSION: ${{ steps.package.outputs.version }}
         run: |
           if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
@@ -182,21 +225,57 @@ jobs:
         run: npm publish --access public
         working-directory: ${{ steps.package.outputs.package_dir }}
 
-      - name: Check tag state
+      - name: Check release tag target commit
         id: tag
+        uses: actions/github-script@v7
         env:
-          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
+          EXPECTED_MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
+        with:
+          script: |
+            const tagName = process.env.TAG_NAME;
+            const expectedMergeSha = process.env.EXPECTED_MERGE_SHA;
+            const tagRef = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `tags/${tagName}`,
+            }).catch((error) => {
+              if (error.status === 404) {
+                core.setOutput("exists", "false");
+                return null;
+              }
+              throw error;
+            });
+
+            if (!tagRef) {
+              return;
+            }
+
+            let tagObject = tagRef.data.object;
+            if (tagObject.type === "tag") {
+              const tagPayload = await github.rest.git.getTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_sha: tagObject.sha,
+              });
+              tagObject = tagPayload.data.object;
+            }
+
+            if (tagObject.type !== "commit") {
+              core.setFailed(`Tag ${tagName} points to non-commit object ${tagObject.type}.`);
+              return;
+            }
+
+            core.setOutput("exists", "true");
+            core.setOutput("resolved_commit_sha", tagObject.sha);
+            if (tagObject.sha !== expectedMergeSha) {
+              core.setFailed(`Tag ${tagName} points to ${tagObject.sha}, expected merge SHA ${expectedMergeSha}.`);
+            }
 
       - name: Create git tag
         if: steps.tag.outputs.exists != 'true'
         env:
-          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
+          TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
           MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -209,7 +288,7 @@ jobs:
         id: release
         uses: actions/github-script@v7
         env:
-          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
+          TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -233,7 +312,7 @@ jobs:
         if: steps.release.outputs.exists != 'true'
         uses: actions/github-script@v7
         env:
-          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
+          TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
           RELEASE_TITLE: ${{ steps.pr.outputs.release_title }}
           RELEASE_BODY: ${{ steps.pr.outputs.release_body }}
           MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
