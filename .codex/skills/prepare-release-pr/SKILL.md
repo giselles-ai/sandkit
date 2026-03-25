@@ -1,6 +1,6 @@
 ---
 name: prepare-release-pr
-description: Prepare a release pull request for a published package in this repository when the human wants to cut a release, draft release notes, or have an agent propose the next npm release. Use this to collect changes since the last published npm version, propose patch or minor, update package.json, and create a release PR whose title is `Release: <package>@<version>` and whose body becomes the release notes source.
+description: "Prepare a release pull request for a published package in this repository when the human wants to cut a release, draft release notes, or have an agent propose the next npm release. Use this to collect changes since the last published npm version, propose patch or minor, update package.json, and create a release PR whose title is `Release: <package>@<version>` and whose body becomes the release notes source."
 ---
 
 # Prepare Release PR
