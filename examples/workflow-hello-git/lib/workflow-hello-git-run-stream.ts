@@ -1,17 +1,17 @@
 import {
-  deriveWorkflowHelloGitDisplayState,
-  type WorkflowHelloGitDisplayState,
-  type WorkflowHelloGitRunEvent,
+  deriveWorkflowPrReviewDisplayState,
+  type WorkflowPrReviewDisplayState,
+  type WorkflowPrReviewRunEvent,
 } from "@/lib/workflow-hello-git-events";
-import type { WorkflowHelloGitFinalOutput } from "@/workflows/hello-git";
+import type { WorkflowPrReviewFinalOutput } from "@/workflows/hello-git";
 
-export type WorkflowHelloGitRun = {
+export type WorkflowPrReviewRun = {
   runId: string;
   status: "running" | "succeeded" | "failed";
   lastIndex: number;
-  events: WorkflowHelloGitRunEvent[];
-  display: WorkflowHelloGitDisplayState;
-  finalOutput?: WorkflowHelloGitFinalOutput;
+  events: WorkflowPrReviewRunEvent[];
+  display: WorkflowPrReviewDisplayState;
+  finalOutput?: WorkflowPrReviewFinalOutput;
 };
 
 export function isRunStatusTerminal(status: string | undefined): boolean {
@@ -31,16 +31,16 @@ export function isStreamOpenFailureFatal(status?: number): boolean {
   return status === 404 || status >= 500;
 }
 
-export function nextStreamStartIndex(activeRun: WorkflowHelloGitRun | null, runId: string): number {
+export function nextStreamStartIndex(activeRun: WorkflowPrReviewRun | null, runId: string): number {
   return activeRun?.runId === runId ? activeRun.lastIndex : 0;
 }
 
 export function applyRunEventToState(
   runId: string,
-  event: WorkflowHelloGitRunEvent,
-  current: WorkflowHelloGitRun | null,
-): WorkflowHelloGitRun {
-  const base: WorkflowHelloGitRun =
+  event: WorkflowPrReviewRunEvent,
+  current: WorkflowPrReviewRun | null,
+): WorkflowPrReviewRun {
+  const base: WorkflowPrReviewRun =
     current?.runId === runId
       ? current
       : {
@@ -56,11 +56,11 @@ export function applyRunEventToState(
   }
 
   const events = [...base.events, event];
-  const next: WorkflowHelloGitRun = {
+  const next: WorkflowPrReviewRun = {
     ...base,
     lastIndex: Math.max(base.lastIndex, event.index + 1),
     events,
-    display: deriveWorkflowHelloGitDisplayState(events),
+    display: deriveWorkflowPrReviewDisplayState(events),
   };
 
   if (event.type === "result") {
@@ -81,6 +81,6 @@ export function applyRunEventToState(
   return next;
 }
 
-export function shouldReconnectForRunningRun(run: WorkflowHelloGitRun | null): boolean {
+export function shouldReconnectForRunningRun(run: WorkflowPrReviewRun | null): boolean {
   return run?.status === "running";
 }

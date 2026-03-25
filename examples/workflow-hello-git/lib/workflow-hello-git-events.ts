@@ -1,13 +1,18 @@
-export type WorkflowHelloGitStep =
+import type { WorkflowPrReviewFinalOutput } from "@/workflows/hello-git";
+
+export type WorkflowPrReviewStep =
   | "ensure_workspace"
   | "clone_repository"
-  | "read_repository_status";
+  | "fetch_pull_request"
+  | "checkout_pull_request"
+  | "run_codex_exec"
+  | "collect_report";
 
-export type WorkflowHelloGitRunEvent =
+export type WorkflowPrReviewRunEvent =
   | {
       index: number;
       type: "step";
-      step: WorkflowHelloGitStep;
+      step: WorkflowPrReviewStep;
       status: "started" | "completed";
       ts: string;
       detail?: string;
@@ -16,15 +21,7 @@ export type WorkflowHelloGitRunEvent =
       index: number;
       type: "result";
       ts: string;
-      finalOutput: {
-        kind: "helloGit";
-        workspaceId: string;
-        repo: string;
-        clonePerformed: boolean;
-        status: string;
-        files: string;
-        requestedAt: string;
-      };
+      finalOutput: WorkflowPrReviewFinalOutput;
     }
   | {
       index: number;
@@ -34,24 +31,16 @@ export type WorkflowHelloGitRunEvent =
       message: string;
     };
 
-type WorkflowHelloGitRunEventInput =
+type WorkflowPrReviewRunEventInput =
   | {
       type: "step";
-      step: WorkflowHelloGitStep;
+      step: WorkflowPrReviewStep;
       status: "started" | "completed";
       detail?: string;
     }
   | {
       type: "result";
-      finalOutput: {
-        kind: "helloGit";
-        workspaceId: string;
-        repo: string;
-        clonePerformed: boolean;
-        status: string;
-        files: string;
-        requestedAt: string;
-      };
+      finalOutput: WorkflowPrReviewFinalOutput;
     }
   | {
       type: "error";
@@ -59,25 +48,25 @@ type WorkflowHelloGitRunEventInput =
       message: string;
     };
 
-export type WorkflowHelloGitDisplayState = {
-  step?: WorkflowHelloGitStep;
+export type WorkflowPrReviewDisplayState = {
+  step?: WorkflowPrReviewStep;
   lastMessage?: string;
 };
 
-export function createWorkflowHelloGitRunEvent(
+export function createWorkflowPrReviewRunEvent(
   index: number,
-  event: WorkflowHelloGitRunEventInput,
-): WorkflowHelloGitRunEvent {
+  event: WorkflowPrReviewRunEventInput,
+): WorkflowPrReviewRunEvent {
   return {
     ...event,
     index,
     ts: new Date().toISOString(),
-  } as WorkflowHelloGitRunEvent;
+  } as WorkflowPrReviewRunEvent;
 }
 
-export function deriveWorkflowHelloGitDisplayState(
-  events: WorkflowHelloGitRunEvent[],
-): WorkflowHelloGitDisplayState {
+export function deriveWorkflowPrReviewDisplayState(
+  events: WorkflowPrReviewRunEvent[],
+): WorkflowPrReviewDisplayState {
   const reversed = [...events].reverse();
 
   for (const event of reversed) {
@@ -89,7 +78,9 @@ export function deriveWorkflowHelloGitDisplayState(
 
     if (event.type === "result") {
       return {
-        lastMessage: event.finalOutput.clonePerformed ? "clone completed" : "workspace reused",
+        lastMessage:
+          event.finalOutput.report?.summary ??
+          `Codex finished with exit code ${event.finalOutput.codexExitCode}.`,
       };
     }
 

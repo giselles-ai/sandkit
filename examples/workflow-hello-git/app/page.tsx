@@ -3,8 +3,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import type {
-  WorkflowHelloGitRunEvent,
-  WorkflowHelloGitStep,
+  WorkflowPrReviewRunEvent,
+  WorkflowPrReviewStep,
 } from "@/lib/workflow-hello-git-events";
 import {
   applyRunEventToState,
@@ -12,9 +12,9 @@ import {
   isStreamOpenFailureFatal,
   nextStreamStartIndex,
   shouldReconnectForRunningRun,
-  type WorkflowHelloGitRun,
+  type WorkflowPrReviewRun,
 } from "@/lib/workflow-hello-git-run-stream";
-import type { WorkflowHelloGitFinalOutput } from "@/workflows/hello-git";
+import type { WorkflowPrReviewFinalOutput } from "@/workflows/hello-git";
 
 type RunStartResponse = {
   runId: string;
@@ -24,10 +24,18 @@ type ApiError = {
   error: string;
 };
 
+function isApiError(value: unknown): value is ApiError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { error?: unknown }).error === "string"
+  );
+}
+
 type RunStatusResponse = {
   runId: string;
   status: "pending" | "running" | "completed" | "succeeded" | "failed" | "cancelled" | "unknown";
-  finalOutput?: WorkflowHelloGitFinalOutput;
+  finalOutput?: WorkflowPrReviewFinalOutput;
   error?: {
     code: string;
     message: string;
@@ -53,37 +61,215 @@ const statusText: Record<RunStatusResponse["status"], string> = {
   unknown: "unknown",
 };
 
-const orderedSteps: WorkflowHelloGitStep[] = [
+const orderedSteps: WorkflowPrReviewStep[] = [
   "ensure_workspace",
   "clone_repository",
-  "read_repository_status",
+  "fetch_pull_request",
+  "checkout_pull_request",
+  "run_codex_exec",
+  "collect_report",
 ];
 
-const stepLabels: Record<WorkflowHelloGitStep, string> = {
+const stepLabels: Record<WorkflowPrReviewStep, string> = {
   ensure_workspace: "Ensure workspace",
   clone_repository: "Clone repository",
-  read_repository_status: "Inspect repository",
+  fetch_pull_request: "Fetch pull request",
+  checkout_pull_request: "Checkout pull request",
+  run_codex_exec: "Run codex exec --yolo",
+  collect_report: "Read report file and check logs",
 };
 
-function ResultOutput({ output }: { output: WorkflowHelloGitFinalOutput }) {
+function ReportList({ items, label }: { items: string[]; label: string }) {
   return (
-    <pre
-      style={{
-        whiteSpace: "pre-wrap",
-        margin: 0,
-        padding: "0.8rem",
-        border: "1px solid #d0d7de",
-        borderRadius: 8,
-      }}
-    >
-      {JSON.stringify(output, null, 2)}
-    </pre>
+    <div>
+      <strong>{label}</strong>
+      <ul style={{ margin: "0.45rem 0 0", paddingLeft: "1.15rem" }}>
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
-function WorkflowOverview({ activeRun }: { activeRun: WorkflowHelloGitRun | null }) {
-  const started = new Set<WorkflowHelloGitStep>();
-  const completed = new Set<WorkflowHelloGitStep>();
+function CheckList({ output }: { output: WorkflowPrReviewFinalOutput["report"] }) {
+  if (!output?.checks.length) {
+    return null;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: "0.45rem" }}>
+      <strong>Checks</strong>
+      <div style={{ display: "grid", gap: "0.45rem" }}>
+        {output.checks.map((check, index) => (
+          <div
+            key={`${check.label}-${check.command}-${index}`}
+            style={{
+              border: "1px solid #d0d7de",
+              borderRadius: 10,
+              padding: "0.7rem 0.8rem",
+              background: "#f8fafc",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
+              <strong>{check.label}</strong>
+              <span>{check.outcome}</span>
+            </div>
+            <pre style={{ margin: "0.45rem 0 0", whiteSpace: "pre-wrap" }}>{check.command}</pre>
+            {check.note ? (
+              <div style={{ marginTop: "0.35rem", color: "#4b5563" }}>{check.note}</div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ResultOutput({ output }: { output: WorkflowPrReviewFinalOutput }) {
+  const report = output.report;
+
+  return (
+    <section style={{ display: "grid", gap: "0.75rem" }}>
+      <div
+        style={{
+          display: "grid",
+          gap: "0.45rem",
+          padding: "0.9rem",
+          border: "1px solid #d0d7de",
+          borderRadius: 10,
+          background: "#fff",
+        }}
+      >
+        <div>
+          <strong>PR</strong>
+          <div>{output.prUrl}</div>
+        </div>
+        <div>
+          <strong>Workspace</strong>
+          <div>{output.workspaceId}</div>
+        </div>
+        <div>
+          <strong>Pull request</strong>
+          <div>
+            {output.repo}#{output.pullNumber}
+          </div>
+        </div>
+        <div>
+          <strong>Reviewed revision</strong>
+          <div>{output.headSha}</div>
+        </div>
+        <div>
+          <strong>Requested at</strong>
+          <div>{output.requestedAt}</div>
+        </div>
+        <div>
+          <strong>Checkout cloned</strong>
+          <div>{output.clonePerformed ? "yes" : "reused"}</div>
+        </div>
+        <div>
+          <strong>Codex exit code</strong>
+          <div>{output.codexExitCode}</div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: "0.55rem",
+          padding: "0.9rem",
+          border: "1px solid #d0d7de",
+          borderRadius: 10,
+          background: "#fff",
+        }}
+      >
+        <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Report</h2>
+        <p style={{ margin: 0 }}>
+          {report?.summary ??
+            "Codex did not produce a structured report. Inspect the checked log files below."}
+        </p>
+        <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.45rem" }}>
+          <CheckList output={report} />
+          {report?.notes?.length ? <ReportList items={report.notes} label="Notes" /> : null}
+          {report?.files?.length ? (
+            <div>
+              <strong>Interesting files</strong>
+              <ul style={{ margin: "0.45rem 0 0", paddingLeft: "1.15rem" }}>
+                {report.files.map((file) => (
+                  <li key={file.path}>
+                    <div>{file.path}</div>
+                    <div style={{ color: "#4b5563" }}>{file.description}</div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: "0.75rem",
+          gridTemplateColumns: "repeat(auto-fit, minmax(18rem, 1fr))",
+        }}
+      >
+        <div
+          style={{
+            padding: "0.9rem",
+            border: "1px solid #d0d7de",
+            borderRadius: 10,
+            background: "#fff",
+          }}
+        >
+          <h2 style={{ margin: "0 0 0.55rem", fontSize: "1.05rem" }}>
+            Stdout file {output.stdoutExists ? "(present)" : "(missing)"}
+          </h2>
+          <pre style={{ margin: "0 0 0.55rem", whiteSpace: "pre-wrap" }}>{output.stdoutFile}</pre>
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+            {output.stdoutTail || "No stdout tail captured."}
+          </pre>
+        </div>
+        <div
+          style={{
+            padding: "0.9rem",
+            border: "1px solid #d0d7de",
+            borderRadius: 10,
+            background: "#fff",
+          }}
+        >
+          <h2 style={{ margin: "0 0 0.55rem", fontSize: "1.05rem" }}>
+            Stderr file {output.stderrExists ? "(present)" : "(missing)"}
+          </h2>
+          <pre style={{ margin: "0 0 0.55rem", whiteSpace: "pre-wrap" }}>{output.stderrFile}</pre>
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+            {output.stderrTail || "No stderr tail captured."}
+          </pre>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: "0.55rem",
+          padding: "0.9rem",
+          border: "1px solid #d0d7de",
+          borderRadius: 10,
+          background: "#fff",
+        }}
+      >
+        <h2 style={{ margin: 0, fontSize: "1.05rem" }}>
+          Report file {output.reportExists ? "(present)" : "(missing)"}
+        </h2>
+        <p style={{ margin: 0 }}>{output.reportFile}</p>
+      </div>
+    </section>
+  );
+}
+
+function WorkflowOverview({ activeRun }: { activeRun: WorkflowPrReviewRun | null }) {
+  const started = new Set<WorkflowPrReviewStep>();
+  const completed = new Set<WorkflowPrReviewStep>();
 
   for (const event of activeRun?.events ?? []) {
     if (event.type !== "step") {
@@ -138,7 +324,7 @@ function WorkflowOverview({ activeRun }: { activeRun: WorkflowHelloGitRun | null
   );
 }
 
-function EventLog({ events }: { events: WorkflowHelloGitRunEvent[] }) {
+function EventLog({ events }: { events: WorkflowPrReviewRunEvent[] }) {
   if (events.length === 0) {
     return null;
   }
@@ -190,7 +376,7 @@ function EventLog({ events }: { events: WorkflowHelloGitRunEvent[] }) {
 async function streamRunEvents(
   runId: string,
   startIndex: number,
-  onEvent: (event: WorkflowHelloGitRunEvent) => void,
+  onEvent: (event: WorkflowPrReviewRunEvent) => void,
   signal: AbortSignal,
 ) {
   const response = await fetch(
@@ -225,22 +411,22 @@ async function streamRunEvents(
         continue;
       }
 
-      onEvent(JSON.parse(trimmed) as WorkflowHelloGitRunEvent);
+      onEvent(JSON.parse(trimmed) as WorkflowPrReviewRunEvent);
     }
   }
 }
 
 export default function HomePage() {
-  const [repo, setRepo] = useState("giselles-ai/sandkit");
+  const [prUrl, setPrUrl] = useState("https://github.com/giselles-ai/sandkit/pull/1");
   const [runId, setRunId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<RunStatusResponse["status"] | null>(null);
-  const [runOutput, setRunOutput] = useState<WorkflowHelloGitFinalOutput | null>(null);
-  const [activeRun, setActiveRun] = useState<WorkflowHelloGitRun | null>(null);
+  const [runOutput, setRunOutput] = useState<WorkflowPrReviewFinalOutput | null>(null);
+  const [activeRun, setActiveRun] = useState<WorkflowPrReviewRun | null>(null);
 
   const streamController = useRef<AbortController | null>(null);
-  const activeRunRef = useRef<WorkflowHelloGitRun | null>(null);
+  const activeRunRef = useRef<WorkflowPrReviewRun | null>(null);
 
   useEffect(() => {
     activeRunRef.current = activeRun;
@@ -258,184 +444,203 @@ export default function HomePage() {
         streamController.current = null;
       }
     };
-    const poll = async () => {
+
+    streamController.current = abort;
+
+    const syncRunStatus = async () => {
+      const response = await fetch(`/api/hello-git/runs/${encodeURIComponent(runId)}`, {
+        cache: "no-store",
+        signal: abort.signal,
+      });
+      const payload = (await response.json()) as RunStatusResponse | ApiError;
+      if (!response.ok) {
+        throw new Error(isApiError(payload) ? payload.error : "Run lookup failed.");
+      }
+      if (isApiError(payload)) {
+        throw new Error(payload.error);
+      }
+
+      setStatus(payload.status);
+      if (payload.finalOutput) {
+        setRunOutput(payload.finalOutput);
+      }
+      if (payload.error) {
+        setError(payload.error.message);
+      }
+      if (isRunStatusTerminal(payload.status)) {
+        setBusy(false);
+      }
+    };
+
+    const openStream = async () => {
+      const startIndex = nextStreamStartIndex(activeRunRef.current, runId);
+
       try {
-        const response = await fetch(`/api/hello-git/runs/${encodeURIComponent(runId)}`, {
-          method: "GET",
-          cache: "no-store",
-          signal: abort.signal,
-        });
-
-        if (!response.ok) {
-          const payload = (await response.json()) as ApiError;
-          throw new Error(payload.error);
-        }
-
-        const payload = (await response.json()) as RunStatusResponse;
-        setStatus(payload.status);
-        setRunOutput(payload.finalOutput ?? null);
-
-        if (payload.error) {
-          setError(payload.error.message);
-          setBusy(false);
-          stopStream();
+        await streamRunEvents(
+          runId,
+          startIndex,
+          (event) => {
+            setActiveRun((current) => applyRunEventToState(runId, event, current));
+          },
+          abort.signal,
+        );
+      } catch (streamError) {
+        if (abort.signal.aborted) {
           return;
         }
 
-        if (isRunStatusTerminal(payload.status)) {
-          setBusy(false);
-          if (payload.status === "failed") {
-            setError("Workflow failed.");
-          }
-          if (payload.status === "succeeded") {
-            setError("");
-          }
-          stopStream();
+        if (
+          streamError instanceof StreamOpenError &&
+          isStreamOpenFailureFatal(streamError.status)
+        ) {
+          throw streamError;
         }
-      } catch (nextError) {
-        if (!abort.signal.aborted) {
-          setBusy(false);
-          setError(nextError instanceof Error ? nextError.message : "Failed to read run status.");
-          stopStream();
-        }
+      }
+
+      await syncRunStatus();
+      if (shouldReconnectForRunningRun(activeRunRef.current)) {
+        await openStream();
       }
     };
 
-    const controller = new AbortController();
-    streamController.current = controller;
-    void streamRunEvents(
-      runId,
-      nextStreamStartIndex(activeRunRef.current, runId),
-      (event) => {
-        const nextRun = applyRunEventToState(runId, event, activeRunRef.current);
-        activeRunRef.current = nextRun;
-        setActiveRun(nextRun);
-        if (event.type === "result") {
-          setRunOutput(event.finalOutput);
-        }
-        if (event.type === "error") {
-          setError(event.message);
-          setBusy(false);
-        }
-      },
-      controller.signal,
-    ).catch(async (streamError) => {
-      if (controller.signal.aborted) {
+    void openStream().catch((streamError) => {
+      if (abort.signal.aborted) {
         return;
       }
 
-      if (streamError instanceof StreamOpenError && isStreamOpenFailureFatal(streamError.status)) {
-        setError(`Unable to open event stream (${streamError.status}).`);
-        setBusy(false);
-        return;
-      }
-
-      const current = activeRunRef.current;
-      if (shouldReconnectForRunningRun(current)) {
-        await poll();
-      }
+      stopStream();
+      setBusy(false);
+      setError(streamError instanceof Error ? streamError.message : "Run monitoring failed.");
     });
-
-    void poll();
-    const timer = setInterval(() => {
-      void poll();
-    }, 1000);
 
     return () => {
       abort.abort();
-      stopStream();
-      clearInterval(timer);
+      if (streamController.current === abort) {
+        streamController.current = null;
+      }
     };
   }, [runId, busy]);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setBusy(true);
     setError("");
-    setStatus("running");
+    setStatus("pending");
     setRunOutput(null);
     setActiveRun(null);
-    setRunId("");
 
     try {
       const response = await fetch("/api/hello-git", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo }),
+        body: JSON.stringify({ prUrl }),
       });
+      const payload = (await response.json()) as RunStartResponse | ApiError;
       if (!response.ok) {
-        const payload = (await response.json()) as ApiError;
+        throw new Error(isApiError(payload) ? payload.error : "Failed to start run.");
+      }
+      if (isApiError(payload)) {
         throw new Error(payload.error);
       }
 
-      const payload = (await response.json()) as RunStartResponse;
       setRunId(payload.runId);
-    } catch (nextError) {
+    } catch (submitError) {
       setBusy(false);
-      setError(nextError instanceof Error ? nextError.message : "Failed to start workflow.");
+      setStatus("failed");
+      setError(submitError instanceof Error ? submitError.message : "Failed to start run.");
     }
-  }
+  };
 
   return (
     <main
       style={{
-        margin: "2rem auto",
-        maxWidth: "56rem",
-        display: "grid",
-        gap: "1rem",
-        padding: "0 1rem",
-        fontFamily: "-apple-system, system-ui, Segoe UI, sans-serif",
+        minHeight: "100vh",
+        padding: "2rem",
+        background: "linear-gradient(180deg, #f3f7fb 0%, #eef2f7 100%)",
+        color: "#0f172a",
       }}
     >
-      <h1 style={{ margin: 0 }}>workflow-hello-git</h1>
-      <p>
-        Workflow decides when to run, and Sandkit keeps the workspace durable through{" "}
-        <code>workspace.sandbox.runCommand(...)</code>.
-      </p>
-      <form onSubmit={submit} style={{ display: "grid", gap: "0.75rem", maxWidth: "28rem" }}>
-        <label style={{ display: "grid", gap: "0.25rem" }}>
-          GitHub repository
-          <input
-            value={repo}
-            onChange={(event) => setRepo(event.target.value)}
-            placeholder="org/name"
-            required
-            style={{
-              border: "1px solid #d0d7de",
-              borderRadius: 6,
-              padding: "0.5rem",
-            }}
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={busy}
+      <div style={{ maxWidth: 1080, margin: "0 auto", display: "grid", gap: "1rem" }}>
+        <section
           style={{
-            width: "fit-content",
-            padding: "0.5rem 1rem",
-            borderRadius: 6,
-            border: "1px solid #2d6cdf",
-            background: "#2f76ff",
-            color: "white",
-            cursor: busy ? "progress" : "pointer",
+            display: "grid",
+            gap: "0.85rem",
+            padding: "1.1rem",
+            border: "1px solid #d0d7de",
+            borderRadius: 14,
+            background: "#fff",
           }}
         >
-          {busy ? "Running..." : "Run durable workflow"}
-        </button>
-      </form>
+          <h1 style={{ margin: 0 }}>PR Review In A Durable Sandbox</h1>
+          <p style={{ margin: 0 }}>
+            Submit a GitHub pull request URL, prepare a durable sandbox checkout, then let Codex run
+            with <code>--yolo</code> inside that sandbox. The outer sandbox is the real execution
+            boundary; this example shows how workflow can preserve the checkout and the resulting
+            files durably.
+          </p>
 
-      {error ? <p style={{ color: "#b42318" }}>{error}</p> : null}
+          <form
+            onSubmit={(event) => void onSubmit(event)}
+            style={{ display: "grid", gap: "0.7rem" }}
+          >
+            <label style={{ display: "grid", gap: "0.35rem" }}>
+              <span>Pull request URL</span>
+              <input
+                value={prUrl}
+                onChange={(event) => setPrUrl(event.target.value)}
+                placeholder="https://github.com/<owner>/<repo>/pull/<number>"
+                style={{
+                  width: "100%",
+                  padding: "0.75rem 0.8rem",
+                  border: "1px solid #d0d7de",
+                  borderRadius: 10,
+                }}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={busy || !prUrl.trim()}
+              style={{
+                width: "fit-content",
+                padding: "0.7rem 1rem",
+                borderRadius: 999,
+                border: "none",
+                background: "#0f172a",
+                color: "#fff",
+                cursor: busy ? "wait" : "pointer",
+              }}
+            >
+              {busy ? "Running..." : "Run Codex review"}
+            </button>
+          </form>
 
-      {runId ? (
-        <section style={{ display: "grid", gap: "0.5rem" }}>
-          <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Run</h2>
-          <p style={{ margin: 0 }}>runId: {runId}</p>
-          {status ? <p style={{ margin: 0 }}>status: {statusText[status]}</p> : null}
+          <div style={{ display: "grid", gap: "0.25rem" }}>
+            <div>
+              status: <strong>{status ? statusText[status] : "idle"}</strong>
+            </div>
+            {runId ? (
+              <div>
+                run id: <code>{runId}</code>
+              </div>
+            ) : null}
+            {error ? <div style={{ color: "#b42318" }}>{error}</div> : null}
+          </div>
+        </section>
+
+        <div
+          style={{
+            display: "grid",
+            gap: "1rem",
+            gridTemplateColumns: "minmax(18rem, 24rem) minmax(0, 1fr)",
+            alignItems: "start",
+          }}
+        >
           <WorkflowOverview activeRun={activeRun} />
           <EventLog events={activeRun?.events ?? []} />
-          {runOutput ? <ResultOutput output={runOutput} /> : null}
-        </section>
-      ) : null}
+        </div>
+
+        {runOutput ? <ResultOutput output={runOutput} /> : null}
+      </div>
     </main>
   );
 }

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 export const metadata: Metadata = {
-  title: "workflow-hello-git",
+  title: "PR Review In A Durable Sandbox",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

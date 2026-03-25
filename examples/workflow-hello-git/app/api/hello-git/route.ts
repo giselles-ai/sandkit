@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 
 import {
-  parseWorkflowHelloGitInput,
-  runHelloGitWorkflow,
-  type ParsedWorkflowHelloGitInput,
+  parseWorkflowPrReviewInput,
+  runPrReviewWorkflow,
+  type ParsedWorkflowPrReviewInput,
 } from "@/workflows/hello-git";
 
 type StartResponse = {
@@ -16,10 +16,10 @@ type ErrorResponse = {
 };
 
 export async function POST(req: NextRequest): Promise<NextResponse<StartResponse | ErrorResponse>> {
-  let input: ParsedWorkflowHelloGitInput;
+  let input: ParsedWorkflowPrReviewInput;
   try {
     const payload = (await req.json()) as unknown;
-    const parsed = parseWorkflowHelloGitInput(payload);
+    const parsed = parseWorkflowPrReviewInput(payload);
     if (!parsed) {
       return NextResponse.json({ error: "Invalid request payload." }, { status: 400 });
     }
@@ -30,9 +30,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<StartResponse
   }
 
   try {
-    const run = await start(runHelloGitWorkflow, [input]);
+    const run = await start(runPrReviewWorkflow, [input]);
     return NextResponse.json({ runId: run.runId }, { status: 202 });
   } catch {
-    return NextResponse.json({ error: "Failed to start hello-git workflow." }, { status: 500 });
+    return NextResponse.json({ error: "Failed to start PR review workflow." }, { status: 500 });
   }
 }
