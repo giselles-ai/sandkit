@@ -211,8 +211,9 @@ npx @giselles-ai/sandkit generate
 
 ## Examples
 
-- [`examples/sandbox-openclaw`](/Users/satoshi/repo/giselles-ai/sandkit/examples/sandbox-openclaw) shows a production-oriented live session flow with OpenClaw on Vercel Sandbox.
-- [`smoke/drizzle-sample`](/Users/satoshi/repo/giselles-ai/sandkit/smoke/drizzle-sample) shows schema generation and Drizzle integration.
+- [`examples/workflow-hello-git`](examples/workflow-hello-git) shows a minimal Next.js + Workflow DevKit flow where Workflow orchestrates durable `workspace.sandbox.runCommand(...)` steps.
+- [`examples/sandbox-openclaw`](examples/sandbox-openclaw) shows a production-oriented live session flow with OpenClaw on Vercel Sandbox.
+- [`smoke/drizzle-sample`](smoke/drizzle-sample) shows schema generation and Drizzle integration.
 
 ## Status
 

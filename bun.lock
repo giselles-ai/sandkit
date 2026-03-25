@@ -71,6 +71,24 @@
         "typescript": "5.8.3",
       },
     },
+    "examples/workflow-hello-git": {
+      "name": "workflow-hello-git",
+      "version": "0.0.1",
+      "dependencies": {
+        "@giselles-ai/sandkit": "workspace:",
+        "next": "16.1.7",
+        "react": "19.2.0",
+        "react-dom": "19.2.0",
+        "workflow": "^4.2.0-beta.71",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/node": "^24.0.0",
+        "@types/react": "^19.2.2",
+        "@types/react-dom": "^19.2.2",
+        "typescript": "5.8.3",
+      },
+    },
     "packages/sandkit": {
       "name": "@giselles-ai/sandkit",
       "version": "0.1.0",
@@ -1521,6 +1539,8 @@
 
     "workflow": ["workflow@4.2.0-beta.71", "", { "dependencies": { "@workflow/astro": "4.0.0-beta.45", "@workflow/cli": "4.2.0-beta.71", "@workflow/core": "4.2.0-beta.71", "@workflow/errors": "4.1.0-beta.18", "@workflow/nest": "0.0.0-beta.20", "@workflow/next": "4.0.1-beta.67", "@workflow/nitro": "4.0.1-beta.66", "@workflow/nuxt": "4.0.1-beta.55", "@workflow/rollup": "4.0.0-beta.28", "@workflow/sveltekit": "4.0.0-beta.60", "@workflow/typescript-plugin": "4.0.1-beta.5", "ms": "2.1.3" }, "peerDependencies": { "@opentelemetry/api": "1" }, "optionalPeers": ["@opentelemetry/api"], "bin": { "wf": "bin/run.js", "workflow": "bin/run.js" } }, "sha512-8DU1zGgE0tCvrfgMoV67OtBP17/uKOhMHnNSeD3JTXNdM6RhP9XatH2Qpy/ED7eiAhxbWuAh/2k+68pAdB0qmw=="],
 
+    "workflow-hello-git": ["workflow-hello-git@workspace:examples/workflow-hello-git"],
+
     "wrap-ansi": ["wrap-ansi@7.0.0", "", { "dependencies": { "ansi-styles": "^4.0.0", "string-width": "^4.1.0", "strip-ansi": "^6.0.0" } }, "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q=="],
 
     "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
@@ -1674,6 +1694,8 @@
     "tar-fs/tar-stream": ["tar-stream@2.2.0", "", { "dependencies": { "bl": "^4.0.3", "end-of-stream": "^1.4.1", "fs-constants": "^1.0.0", "inherits": "^2.0.3", "readable-stream": "^3.1.1" } }, "sha512-ujeqbceABgwMZxEJnk2HDY2DlnUZ+9oEcb1KzTVfYHio0UE6dG71n60d8D2I4qNvleWrrXpmjpt7vZeF1LnMZQ=="],
 
     "terminal-link/ansi-escapes": ["ansi-escapes@7.3.0", "", { "dependencies": { "environment": "^1.0.0" } }, "sha512-BvU8nYgGQBxcmMuEeUEmNTvrMVjJNSH7RgW24vXexN4Ven6qCvy4TntnvlnwnMLTVlcRQQdbRY8NKnaIoeWDNg=="],
+
+    "workflow-hello-git/typescript": ["typescript@5.8.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ=="],
 
     "wrap-ansi/strip-ansi": ["strip-ansi@6.0.1", "", { "dependencies": { "ansi-regex": "^5.0.1" } }, "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A=="],
 
