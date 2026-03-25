@@ -27,8 +27,6 @@ jobs:
         with:
           app-id: ${{ secrets.GISELLE_SANDKIT_APP_ID }}
           private-key: ${{ secrets.GISELLE_SANDKIT_PRIVATE_KEY }}
-          permission-contents: write
-          permission-workflows: write
 
       - name: Get GitHub App User ID
         id: app-user-id
