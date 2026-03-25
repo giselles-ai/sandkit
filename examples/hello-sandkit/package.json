@@ -7,7 +7,7 @@
     "start": "bun --env-file .env.local index.ts"
   },
   "dependencies": {
-    "@giselles-ai/sandkit": "workspace:*"
+    "@giselles-ai/sandkit": "latest"
   },
   "devDependencies": {
     "@types/bun": "latest"

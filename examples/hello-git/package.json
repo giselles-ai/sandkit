@@ -8,7 +8,7 @@
     "resume": "bun --env-file .env.local resume.ts"
   },
   "dependencies": {
-    "@giselles-ai/sandkit": "workspace:*"
+    "@giselles-ai/sandkit": "latest"
   },
   "devDependencies": {
     "@types/bun": "latest"

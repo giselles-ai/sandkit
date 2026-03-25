@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@giselles-ai/sandkit": "workspace:*",
+    "@giselles-ai/sandkit": "latest",
     "@libsql/client": "^0.15.15",
     "drizzle-orm": "0.45.1",
     "next": "16.1.7",
