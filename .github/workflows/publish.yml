@@ -21,12 +21,26 @@ jobs:
       group: publish-${{ inputs.pull_request_number }}
       cancel-in-progress: false
     steps:
-      - name: Resolve release PR from workflow_dispatch input
+      - name: Create access token for GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.GISELLE_SANDKIT_APP_ID }}
+          private-key: ${{ secrets.GISELLE_SANDKIT_PRIVATE_KEY }}
+
+      - name: Get GitHub App User ID
+        id: app-user-id
+        run: echo "user-id=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Load release PR metadata
         id: pr
         uses: actions/github-script@v7
         env:
           WORKFLOW_DISPATCH_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const pullRequestInput = process.env.WORKFLOW_DISPATCH_PULL_REQUEST_NUMBER;
             if (!pullRequestInput) {
@@ -99,6 +113,8 @@ jobs:
         with:
           ref: ${{ steps.pr.outputs.merge_sha }}
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -259,11 +275,12 @@ jobs:
         env:
           TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
           MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-user-id.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git tag "$TAG_NAME" "$MERGE_SHA"
-          git push origin "refs/tags/$TAG_NAME"
+          git push "https://x-access-token:${APP_TOKEN}@github.com/${{ github.repository }}.git" "refs/tags/$TAG_NAME"
 
       - name: Check GitHub Release state
         id: release
@@ -271,6 +288,7 @@ jobs:
         env:
           TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             try {
               const release = await github.rest.repos.getReleaseByTag({
@@ -297,6 +315,7 @@ jobs:
           RELEASE_BODY: ${{ steps.pr.outputs.release_body }}
           MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             await github.rest.repos.createRelease({
               owner: context.repo.owner,
