@@ -11,6 +11,11 @@ export type WorkflowHelloGitInput = {
   readonly requestedAt?: string;
 };
 
+export type ParsedWorkflowHelloGitInput = {
+  readonly repo: string;
+  readonly requestedAt: string;
+};
+
 export type WorkflowHelloGitFinalOutput = {
   readonly kind: "helloGit";
   readonly workspaceId: string;
@@ -182,21 +187,39 @@ async function readRepositoryStatus(repo: string): Promise<{ status: string; fil
   return details;
 }
 
-function normalizeInput(input: WorkflowHelloGitInput): WorkflowHelloGitInput {
-  return {
-    repo: normalizeRepo(input.repo),
-    requestedAt: input.requestedAt ?? new Date().toISOString(),
-  };
+export function parseWorkflowHelloGitInput(
+  input: WorkflowHelloGitInput | unknown,
+): ParsedWorkflowHelloGitInput | null {
+  if (typeof input !== "object" || input === null) {
+    return null;
+  }
+
+  const candidate = input as WorkflowHelloGitInput;
+  if (typeof candidate.repo !== "string") {
+    return null;
+  }
+
+  if (candidate.requestedAt !== undefined && typeof candidate.requestedAt !== "string") {
+    return null;
+  }
+
+  try {
+    return {
+      repo: normalizeRepo(candidate.repo),
+      requestedAt: candidate.requestedAt ?? new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function runHelloGitWorkflow(
-  input: WorkflowHelloGitInput,
+  input: ParsedWorkflowHelloGitInput,
 ): Promise<WorkflowHelloGitFinalOutput> {
   "use workflow";
 
-  const normalized = normalizeInput(input);
-  const repo = normalized.repo;
-  const requestedAt = normalized.requestedAt!;
+  const repo = input.repo;
+  const requestedAt = input.requestedAt;
   const workspace = await createWorkspace(repo);
   const repository = await getRepository(repo);
   const details = await readRepositoryStatus(repo);
