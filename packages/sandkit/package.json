@@ -1,6 +1,6 @@
 {
   "name": "@giselles-ai/sandkit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Workspace state, session management, and durable command execution for Vercel Sandbox.",
   "keywords": [
     "agent",
