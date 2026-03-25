@@ -1,28 +1,105 @@
 # hello-git
 
-Minimal Sandkit sample that demonstrates durable Git access:
+Minimal Sandkit sample for one idea:
 
-- `createSandkit(...)`
-- `createWorkspace(...)` with durable `policy: allowServices([github()])`
-- `workspace.sandbox.runCommand({...})`
-- `runCommand`-driven cloning and listing
+you can come back to the same workspace later and keep working with the checkout that was created before.
 
-This example intentionally does not use `openSession()` / `attachSession()`.
+Run two scripts. The first clones a repo. The second comes back later and reads from that same checkout.
 
-## What this does
+This example intentionally does not use `openSession()` / `attachSession()`. It stays centered on `workspace.sandbox.runCommand(...)`.
 
-- Creates a durable workspace state store with Bun SQLite.
-- Creates a Vercel-backed workspace with GitHub policy enabled.
-- Runs one durable command to clone `https://github.com/${GITHUB_REPO}` into `repo`.
-- Runs another durable command to list the cloned directory with `ls repo`.
+## Quick Start
 
-## Prerequisites
+Build Sandkit first:
+
+```sh
+cd packages/sandkit
+bun run build
+```
+
+Then move into the example:
+
+```sh
+cd examples/hello-git
+```
+
+Link to a Vercel project and pull local environment:
+
+```sh
+vercel link
+vercel env pull
+```
+
+Set the GitHub repo to clone and the token Sandkit should use for GitHub access:
+
+```sh
+export GITHUB_REPO=org/name
+export GITHUB_TOKEN=...
+```
+
+Install dependencies:
+
+```sh
+bun install
+```
+
+Now run the two scripts:
+
+```sh
+bun run create-and-clone
+bun run resume
+```
+
+## What You Should Notice
+
+On `bun run create-and-clone`, you should see:
+
+- the workspace id
+- a successful clone
+
+On `bun run resume`, you should see:
+
+- the same workspace id
+- `git status --short --branch`
+- the repository contents under `repo`
+
+If that second script works without recloning, the important part has already happened.
+
+## Why This Is Interesting
+
+Vercel Sandbox already lets one sandbox handle run multiple commands.
+
+This example is showing something else:
+
+- `create-and-clone.ts` creates a durable workspace with id `"hello-git"` and clones a GitHub repo into `repo`
+- `resume.ts` comes back later, reopens that same workspace, and reads from the existing checkout
+
+That is the difference this example is trying to make visible:
+
+- a workspace is the durable unit
+- `runCommand(...)` is the unit of work
+- later process runs can reopen the same workspace and continue from the previous state
+
+This is why the example uses two scripts instead of one longer script. Splitting creation from resumption makes the durable boundary visible.
+
+## Files
+
+- `create-and-clone.ts`: creates the durable workspace and clones the repository
+- `resume.ts`: reopens that workspace and reads from the existing checkout
+- `lib/sandkit.ts`: the fixed Sandkit runtime for this example
+- `lib/repo.ts`: GitHub repo input parsing
+- `package.json`: local scripts and dependencies
+- `tsconfig.json`: local TypeScript settings
+
+## Setup Details
+
+Prerequisites:
 
 - Vercel CLI (`vercel`)
-- Node.js and Bun.
-- A linked Vercel project to provide local OIDC credentials.
+- Node.js and Bun
+- A linked Vercel project to provide local OIDC credentials
 
-## Dependency build step
+Dependency build step:
 
 This example consumes the package exports from `@giselles-ai/sandkit` (`dist/` entry points), so the library must be built first.
 
@@ -33,52 +110,17 @@ cd packages/sandkit
 bun run build
 ```
 
-## Setup
-
-1. Link to a Vercel project:
-
-```sh
-cd examples/hello-git
-vercel link
-```
-
-2. Pull local environment to create `.env.local` with project-backed OIDC credentials:
-
-`vercel link` connects this directory to a Vercel project, and `vercel env pull` writes local project-scoped credentials including `VERCEL_OIDC_TOKEN` into `.env.local`.
-
-```sh
-cd examples/hello-git
-vercel env pull
-```
-
-3. Set required environment variables:
-
-```sh
-export GITHUB_REPO=org/name
-export GITHUB_TOKEN=...
-```
+`vercel env pull` creates `.env.local` with project-backed OIDC credentials.
 
 `GITHUB_TOKEN` is not inserted into clone URLs or command arguments. It's used as the default credential for `github()` so Vercel Sandbox applies the correct header transforms for `github.com` / `api.github.com`.
 
-4. Install and run:
+## Read It As A Snippet
 
-```sh
-bun install
-bun run start
-```
+If you just want the core idea, ignore the setup details and read the example like this:
 
-## Files
+- create workspace
+- run `git clone`
+- later reopen the same workspace
+- run `git status`
 
-- `index.ts`: workspace setup + durable `runCommand(...)` calls for clone and list.
-- `package.json`: local script/dependencies.
-- `tsconfig.json`: local TypeScript settings.
-
-## Expected output
-
-You should see logs for the clone and list phases. On success, `ls` prints the repository contents under `repo`.
-
-## Durable behavior note
-
-Within one run, the second `runCommand(...)` sees the repository cloned by the first command through Sandkit's durable command boundary.
-
-This example creates a new workspace each time it starts, so it does not demonstrate reopening the same workspace across separate process runs. It also does not auto-delete `repo` inside a workspace; if you adapt this example to reuse a fixed workspace id, be explicit about how you want to handle an existing checkout.
+That is the Sandkit-shaped story this example is trying to teach.

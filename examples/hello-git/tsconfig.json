@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["@types/bun"]
   },
-  "include": ["./index.ts"]
+  "include": ["./create-and-clone.ts", "./resume.ts", "./lib/*.ts"]
 }
