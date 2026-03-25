@@ -1,0 +1,7 @@
+display_name: Prepare Release PR
+short_description: Propose a version bump and open a release PR
+default_prompt: >-
+  Prepare a release pull request for the target package by finding the latest
+  published npm version, collecting the changes since that baseline, proposing
+  patch or minor, updating package.json, and creating a PR titled `Release:
+  <package>@<version>` with a concise Japanese body.

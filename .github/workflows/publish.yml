@@ -1,0 +1,232 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Merged release PR number
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.event.inputs.pull_request_number }}
+      cancel-in-progress: false
+    steps:
+      - name: Load release PR metadata
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = Number(core.getInput("pull_request_number", {required: true}));
+            const {data: pr} = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            if (!pr.merged) {
+              core.setFailed(`Pull request #${prNumber} is not merged.`);
+              return;
+            }
+
+            if (pr.base.ref !== "main") {
+              core.setFailed(`Pull request #${prNumber} targets ${pr.base.ref}, expected main.`);
+              return;
+            }
+
+            if (!pr.merge_commit_sha) {
+              core.setFailed(`Pull request #${prNumber} has no merge commit SHA.`);
+              return;
+            }
+
+            const prefix = "Release: ";
+            if (!pr.title.startsWith(prefix)) {
+              core.setFailed(`Pull request #${prNumber} title must start with "${prefix}".`);
+              return;
+            }
+
+            const releaseTitle = pr.title.slice(prefix.length).trim();
+            const separatorIndex = releaseTitle.lastIndexOf("@");
+            if (separatorIndex <= 0) {
+              core.setFailed(`Pull request title "${pr.title}" must look like "Release: <package>@<version>".`);
+              return;
+            }
+
+            const packageName = releaseTitle.slice(0, separatorIndex);
+            const version = releaseTitle.slice(separatorIndex + 1);
+
+            if (!packageName || !version) {
+              core.setFailed(`Could not parse package name and version from "${pr.title}".`);
+              return;
+            }
+
+            if (!pr.body || !pr.body.trim()) {
+              core.setFailed(`Pull request #${prNumber} body is empty.`);
+              return;
+            }
+
+            core.setOutput("merge_sha", pr.merge_commit_sha);
+            core.setOutput("package_name", packageName);
+            core.setOutput("version", version);
+            core.setOutput("release_title", releaseTitle);
+            core.setOutput("tag_name", releaseTitle);
+            core.setOutput("release_body", pr.body);
+            core.setOutput("pr_number", String(pr.number));
+            core.setOutput("pr_url", pr.html_url);
+
+      - name: Check out merge commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.merge_sha }}
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve package directory
+        id: package
+        env:
+          PACKAGE_NAME: ${{ steps.pr.outputs.package_name }}
+          EXPECTED_VERSION: ${{ steps.pr.outputs.version }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const packageName = process.env.PACKAGE_NAME;
+          const expectedVersion = process.env.EXPECTED_VERSION;
+          const packagesDir = path.join(process.cwd(), "packages");
+
+          const candidates = [];
+          for (const entry of fs.readdirSync(packagesDir, {withFileTypes: true})) {
+            if (!entry.isDirectory()) continue;
+            const packageJsonPath = path.join(packagesDir, entry.name, "package.json");
+            if (!fs.existsSync(packageJsonPath)) continue;
+            const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+            if (pkg.name === packageName) {
+              candidates.push({
+                dir: path.join("packages", entry.name),
+                version: pkg.version,
+              });
+            }
+          }
+
+          if (candidates.length !== 1) {
+            throw new Error(`Expected exactly one package directory for ${packageName}, found ${candidates.length}.`);
+          }
+
+          const target = candidates[0];
+          if (target.version !== expectedVersion) {
+            throw new Error(`package.json version ${target.version} does not match PR title version ${expectedVersion}.`);
+          }
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `package_dir=${target.dir}\n`);
+          NODE
+
+      - name: Check npm publication state
+        id: npm
+        env:
+          PACKAGE_NAME: ${{ steps.pr.outputs.package_name }}
+          VERSION: ${{ steps.pr.outputs.version }}
+        run: |
+          if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build package
+        env:
+          PACKAGE_DIR: ${{ steps.package.outputs.package_dir }}
+        run: bun run --cwd "$PACKAGE_DIR" build
+
+      - name: Publish package to npm
+        if: steps.npm.outputs.already_published != 'true'
+        env:
+          PACKAGE_DIR: ${{ steps.package.outputs.package_dir }}
+        run: npm publish --access public
+        working-directory: ${{ steps.package.outputs.package_dir }}
+
+      - name: Check tag state
+        id: tag
+        env:
+          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create git tag
+        if: steps.tag.outputs.exists != 'true'
+        env:
+          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
+          MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG_NAME" "$MERGE_SHA"
+          git push origin "refs/tags/$TAG_NAME"
+
+      - name: Check GitHub Release state
+        id: release
+        uses: actions/github-script@v7
+        env:
+          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
+        with:
+          script: |
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: process.env.TAG_NAME,
+              });
+              core.setOutput("exists", "true");
+              core.setOutput("id", String(release.data.id));
+            } catch (error) {
+              if (error.status === 404) {
+                core.setOutput("exists", "false");
+                return;
+              }
+              throw error;
+            }
+
+      - name: Create GitHub Release
+        if: steps.release.outputs.exists != 'true'
+        uses: actions/github-script@v7
+        env:
+          TAG_NAME: ${{ steps.pr.outputs.tag_name }}
+          RELEASE_TITLE: ${{ steps.pr.outputs.release_title }}
+          RELEASE_BODY: ${{ steps.pr.outputs.release_body }}
+          MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
+        with:
+          script: |
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.TAG_NAME,
+              target_commitish: process.env.MERGE_SHA,
+              name: process.env.RELEASE_TITLE,
+              body: process.env.RELEASE_BODY,
+              draft: false,
+              prerelease: false,
+              generate_release_notes: false,
+            });
