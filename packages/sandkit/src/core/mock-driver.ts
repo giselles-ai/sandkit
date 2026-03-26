@@ -1,11 +1,11 @@
 import { allowAll, describeWorkspacePolicy } from "../policies/dsl.ts";
 import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
+  Command,
   CommandResult,
   SandboxSessionLease,
   PersistedSandboxState,
   SandboxDriver,
-  SandboxRunCommandOptions,
   WorkspaceSessionLog,
   WorkspaceSessionProcessStartInput,
   SandboxCreateOptions,
@@ -83,7 +83,8 @@ class MockSandboxDriver implements SandboxDriver {
     wait: () => Promise<CommandResult>;
     logs: () => AsyncIterable<WorkspaceSessionLog>;
   }> {
-    const commandResult = await this.runCommand(input.command, [...input.args]);
+    const command = await this.runCommand(input.command, [...input.args]);
+    const commandResult = await command.wait();
     if (input.onStdout && commandResult.stdout) {
       input.onStdout(commandResult.stdout);
     }
@@ -110,8 +111,28 @@ class MockSandboxDriver implements SandboxDriver {
   async runCommand(
     command: string,
     args: string[],
-    _options?: SandboxRunCommandOptions["provider"],
-  ): Promise<CommandResult> {
+    options?: { readonly detached?: boolean },
+  ): Promise<Command> {
+    const commandResult = await this.#executeCommand(command, args);
+
+    return {
+      wait: async () => commandResult,
+      logs: options?.detached
+        ? () => {
+            const chunks: WorkspaceSessionLog[] = [];
+            if (commandResult.stdout) {
+              chunks.push({ stream: "stdout", chunk: commandResult.stdout });
+            }
+            if (commandResult.stderr) {
+              chunks.push({ stream: "stderr", chunk: commandResult.stderr });
+            }
+            return toAsyncIterable(chunks);
+          }
+        : undefined,
+    };
+  }
+
+  async #executeCommand(command: string, args: string[]): Promise<CommandResult> {
     switch (command) {
       case "echo":
         return this.runEcho(args);

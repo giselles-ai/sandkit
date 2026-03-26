@@ -70,6 +70,19 @@ export interface CommandResult {
   stdout: string;
 }
 
+export interface Command {
+  /**
+   * Wait for durable completion of the command unit-of-work: process exit,
+   * snapshot/commit, and persist outcome.
+   */
+  readonly wait: () => Promise<CommandResult>;
+  /**
+   * Ephemeral log stream for detached execution. The stream is live-only and does
+   * not participate in durable state replay.
+   */
+  readonly logs?: () => AsyncIterable<WorkspaceSessionLog>;
+}
+
 export interface SandboxSessionLease {
   readonly sandboxId: string;
   readonly observedAt: string;
@@ -116,7 +129,13 @@ export interface WorkspaceSessionProcessStartInput {
   readonly onStderr?: ((chunk: string) => void) | undefined;
 }
 
-export interface SandboxRunCommandOptions {
+export interface WorkspaceSessionRunCommandOptions {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly policy?: WorkspacePolicy;
+}
+
+interface WorkspaceRunCommandBaseOptions {
   readonly command: string;
   readonly args?: readonly string[];
   readonly policy?: WorkspacePolicy;
@@ -126,16 +145,17 @@ export interface SandboxRunCommandOptions {
    * must not mutate durable workspace defaults.
    */
   readonly timeoutMs?: number;
-  readonly provider?: {
-    readonly vercel?: {
-      /**
-       * Opt into detached runCommand() execution followed by wait()
-       * for this invocation only.
-       */
-      readonly runViaDetachedWait?: boolean;
-    };
-  };
 }
+
+export interface WorkspaceRunCommandOptions extends WorkspaceRunCommandBaseOptions {}
+
+export interface WorkspaceRunCommandDetachedOptions extends WorkspaceRunCommandBaseOptions {
+  readonly detached: true;
+}
+
+export type SandboxRunCommandOptions =
+  | WorkspaceRunCommandOptions
+  | WorkspaceRunCommandDetachedOptions;
 
 export interface PersistedSandboxState {
   readonly kind: string;
@@ -157,8 +177,8 @@ export interface SandboxDriver {
   runCommand(
     command: string,
     args: string[],
-    options?: SandboxRunCommandOptions["provider"],
-  ): Promise<CommandResult>;
+    options?: { readonly detached?: boolean },
+  ): Promise<Command>;
   startProcess?(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess>;
   /** Persists and restores durability state through commit() and attach/restore APIs. */
   snapshot(): Promise<PersistedSandboxState>;
