@@ -19,6 +19,13 @@ export type WorkflowPrReviewRunEvent =
     }
   | {
       index: number;
+      type: "live_command_output";
+      stream: "stdout" | "stderr";
+      chunk: string;
+      ts: string;
+    }
+  | {
+      index: number;
       type: "result";
       ts: string;
       finalOutput: WorkflowPrReviewFinalOutput;
@@ -37,6 +44,11 @@ type WorkflowPrReviewRunEventInput =
       step: WorkflowPrReviewStep;
       status: "started" | "completed";
       detail?: string;
+    }
+  | {
+      type: "live_command_output";
+      stream: "stdout" | "stderr";
+      chunk: string;
     }
   | {
       type: "result";
@@ -89,6 +101,10 @@ export function deriveWorkflowPrReviewDisplayState(
         step: event.status === "started" ? event.step : undefined,
         lastMessage: event.detail,
       };
+    }
+
+    if (event.type === "live_command_output") {
+      continue;
     }
   }
 

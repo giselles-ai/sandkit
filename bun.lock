@@ -75,7 +75,7 @@
       "name": "workflow-hello-git",
       "version": "0.0.1",
       "dependencies": {
-        "@giselles-ai/sandkit": "latest",
+        "@giselles-ai/sandkit": "workspace:",
         "next": "16.1.7",
         "react": "19.2.0",
         "react-dom": "19.2.0",
@@ -1695,8 +1695,6 @@
     "tar-fs/tar-stream": ["tar-stream@2.2.0", "", { "dependencies": { "bl": "^4.0.3", "end-of-stream": "^1.4.1", "fs-constants": "^1.0.0", "inherits": "^2.0.3", "readable-stream": "^3.1.1" } }, "sha512-ujeqbceABgwMZxEJnk2HDY2DlnUZ+9oEcb1KzTVfYHio0UE6dG71n60d8D2I4qNvleWrrXpmjpt7vZeF1LnMZQ=="],
 
     "terminal-link/ansi-escapes": ["ansi-escapes@7.3.0", "", { "dependencies": { "environment": "^1.0.0" } }, "sha512-BvU8nYgGQBxcmMuEeUEmNTvrMVjJNSH7RgW24vXexN4Ven6qCvy4TntnvlnwnMLTVlcRQQdbRY8NKnaIoeWDNg=="],
-
-    "workflow-hello-git/@giselles-ai/sandkit": ["@giselles-ai/sandkit@0.1.1", "", { "dependencies": { "@vercel/sandbox": "1.8.1" }, "peerDependencies": { "drizzle-orm": "^0.44.2" }, "optionalPeers": ["drizzle-orm"], "bin": { "sandkit": "dist/bin.js" } }, "sha512-I2ctu28+1CqekT5LXSZqhT8r5axDvy8qJ0xuVVpQ7wL0SB9e74AEQi73Fd0Hj+cNu0CX11kO3qdycu2UNxY0ug=="],
 
     "workflow-hello-git/typescript": ["typescript@5.8.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ=="],
 
