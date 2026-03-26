@@ -1,5 +1,6 @@
 import { allowService, allowServices, codex, github } from "@giselles-ai/sandkit";
-import { getWritable } from "workflow";
+import { FatalError, getWritable } from "workflow";
+import { z } from "zod";
 
 import { sandkit } from "@/lib/sandkit";
 import { createWorkflowPrReviewRunEvent } from "@/lib/workflow-hello-git-events";
@@ -22,24 +23,28 @@ export type ParsedWorkflowPrReviewInput = {
   readonly requestedAt: string;
 };
 
-export type WorkflowPrReviewArtifact = {
-  readonly path: string;
-  readonly description: string;
-};
+const workflowPrReviewArtifactSchema = z.object({
+  path: z.string(),
+  description: z.string(),
+});
 
-export type WorkflowPrReviewCheck = {
-  readonly label: string;
-  readonly command: string;
-  readonly outcome: "succeeded" | "failed" | "not_run";
-  readonly note?: string;
-};
+const workflowPrReviewCheckSchema = z.object({
+  label: z.string(),
+  command: z.string(),
+  outcome: z.enum(["succeeded", "failed", "not_run"]),
+  note: z.string().nullable(),
+});
 
-export type WorkflowPrReviewReport = {
-  readonly summary: string;
-  readonly checks: WorkflowPrReviewCheck[];
-  readonly notes?: string[];
-  readonly files?: WorkflowPrReviewArtifact[];
-};
+const workflowPrReviewReportSchema = z.object({
+  summary: z.string(),
+  checks: z.array(workflowPrReviewCheckSchema),
+  notes: z.array(z.string()).nullable(),
+  files: z.array(workflowPrReviewArtifactSchema).nullable(),
+});
+
+export type WorkflowPrReviewArtifact = z.infer<typeof workflowPrReviewArtifactSchema>;
+export type WorkflowPrReviewCheck = z.infer<typeof workflowPrReviewCheckSchema>;
+export type WorkflowPrReviewReport = z.infer<typeof workflowPrReviewReportSchema>;
 
 export type WorkflowPrReviewFinalOutput = {
   readonly kind: "prReview";
@@ -83,48 +88,81 @@ const REPORT_PATH = "repo/.codex/pr-verification.report.json";
 const STDOUT_PATH = "repo/.codex/codex.stdout.ndjson";
 const STDERR_PATH = "repo/.codex/codex.stderr.log";
 const SCHEMA_PATH = "repo/.codex/report.schema.json";
+const CODEX_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 
-const REVIEW_SCHEMA = JSON.stringify({
-  type: "object",
-  additionalProperties: false,
-  required: ["summary", "checks"],
-  properties: {
-    summary: { type: "string" },
-    checks: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["label", "command", "outcome"],
-        properties: {
-          label: { type: "string" },
-          command: { type: "string" },
-          outcome: {
-            type: "string",
-            enum: ["succeeded", "failed", "not_run"],
-          },
-          note: { type: "string" },
-        },
-      },
-    },
-    notes: {
-      type: "array",
-      items: { type: "string" },
-    },
-    files: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "description"],
-        properties: {
-          path: { type: "string" },
-          description: { type: "string" },
-        },
-      },
-    },
-  },
-});
+function toStrictJsonSchema(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => toStrictJsonSchema(item));
+  }
+
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const record = Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, toStrictJsonSchema(child)]),
+  ) as Record<string, unknown>;
+
+  const anyOf = Array.isArray(record.anyOf) ? record.anyOf : null;
+  if (anyOf && anyOf.length === 2) {
+    const typeEntries = anyOf
+      .map((entry) => {
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+          const nested = entry as Record<string, unknown>;
+          return typeof nested.type === "string" ? nested.type : null;
+        }
+        return null;
+      })
+      .filter((entry): entry is string => entry !== null);
+
+    if (typeEntries.length === 2 && typeEntries.includes("null")) {
+      const nonNullSchema = anyOf.find((entry) => {
+        return (
+          entry &&
+          typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          (entry as Record<string, unknown>).type !== "null"
+        );
+      });
+
+      if (nonNullSchema && typeof nonNullSchema === "object" && !Array.isArray(nonNullSchema)) {
+        const normalized = {
+          ...(nonNullSchema as Record<string, unknown>),
+          type: typeEntries,
+        };
+        return normalized;
+      }
+    }
+  }
+
+  return record;
+}
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof AggregateError) {
+    const details = error.errors
+      .map((child, index) => `#${index + 1} ${formatUnknownError(child)}`)
+      .join("\n");
+    return details ? `${error.message}\n${details}` : error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.stack ?? `${error.name}: ${error.message}`;
+  }
+
+  return String(error);
+}
+
+function createReviewSchemaJson(): string {
+  const jsonSchema = toStrictJsonSchema(z.toJSONSchema(workflowPrReviewReportSchema)) as Record<
+    string,
+    unknown
+  >;
+  delete jsonSchema.$schema;
+  return JSON.stringify(jsonSchema);
+}
+
+const REVIEW_SCHEMA = createReviewSchemaJson();
 
 async function writeStepEvent(
   index: number,
@@ -336,9 +374,9 @@ function buildPrompt(pr: ParsedPullRequest): string {
     "- You are running with codex exec --yolo, so the outer sandbox is the real execution boundary.",
     "- Return a strict JSON object matching this schema:",
     "  - summary: string",
-    "  - checks: array of objects with label, command, outcome, and optional note",
-    "  - notes (optional): any caveats",
-    "  - files (optional): interesting file paths with description",
+    "  - checks: array of objects with label, command, outcome, and note (use null when there is no note)",
+    "  - notes: array of caveats, or null when there are none",
+    "  - files: array of interesting file paths with description, or null when there are none",
     "",
     "Rules:",
     "- Do not ask for confirmation and do not request more input from the user.",
@@ -373,25 +411,41 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
   }
 
   const prompt = buildPrompt(pr);
-  const result = await workspace.sandbox.runCommand({
-    command: "codex",
-    args: [
-      "exec",
-      "--yolo",
-      "--skip-git-repo-check",
-      "--color",
-      "never",
-      "--json",
-      "--output-schema",
-      SCHEMA_PATH,
-      "--output-last-message",
-      REPORT_PATH,
-      "-C",
-      "repo",
-      prompt,
-    ],
-    policy: allowService(codex()),
-  });
+  let result: CodexExecutionResult & { stdout: string; stderr: string };
+  try {
+    const commandResult = await workspace.sandbox.runCommand({
+      command: "codex",
+      args: [
+        "exec",
+        "--yolo",
+        "--skip-git-repo-check",
+        "--color",
+        "never",
+        "--json",
+        "--output-schema",
+        SCHEMA_PATH,
+        "--output-last-message",
+        REPORT_PATH,
+        "-C",
+        "repo",
+        prompt,
+      ],
+      policy: allowService(codex()),
+      timeoutMs: CODEX_RUN_TIMEOUT_MS,
+      provider: {
+        vercel: {
+          runViaDetachedWait: true,
+        },
+      },
+    });
+    result = {
+      exitCode: commandResult.exitCode,
+      stdout: commandResult.stdout,
+      stderr: commandResult.stderr,
+    };
+  } catch (error) {
+    throw new FatalError(`codex exec failed:\n${formatUnknownError(error)}`);
+  }
 
   const storeLogs = await workspace.sandbox.runCommand("bash", [
     "-lc",
@@ -421,13 +475,15 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
   return parsed;
 }
 
+runCodexExec.maxRetries = 0;
+
 function parseReport(raw: string): WorkflowPrReviewReport | null {
   if (!raw.trim()) {
     return null;
   }
 
   try {
-    return JSON.parse(raw) as WorkflowPrReviewReport;
+    return workflowPrReviewReportSchema.parse(JSON.parse(raw));
   } catch {
     return null;
   }

@@ -72,6 +72,14 @@ interface SessionPolicyLifecycle {
   readonly onPolicyChange?: (policy: WorkspacePolicy) => Promise<void>;
 }
 
+type NormalizedRunCommandInput = {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly policy: WorkspacePolicy;
+  readonly timeoutMs: number | undefined;
+  readonly provider: NonNullable<SandboxRunCommandOptions["provider"]>;
+};
+
 type CommitHook = (commit: SandboxCommit) => Promise<void>;
 type DefaultPolicyResolver = () => Promise<WorkspacePolicy>;
 
@@ -106,19 +114,26 @@ export class ManagedSandbox {
     const normalized = await this.normalizeRunCommandInput(inputOrCommand, args);
     this.ensureCommandShape(normalized.command, normalized.args);
     return this.runUnitOfWork(normalized.command, normalized.args, normalized.policy, () =>
-      this.executeCommand(normalized.command, normalized.args, normalized.policy),
+      this.executeCommand(
+        normalized.command,
+        normalized.args,
+        normalized.policy,
+        normalized.provider,
+      ),
     );
   }
 
   private async normalizeRunCommandInput(
     inputOrCommand: string | SandboxRunCommandOptions,
     args: readonly string[],
-  ): Promise<Required<SandboxRunCommandOptions>> {
+  ): Promise<NormalizedRunCommandInput> {
     if (typeof inputOrCommand === "string") {
       return {
         command: inputOrCommand,
         args,
         policy: await this.#resolveDefaultPolicy(),
+        timeoutMs: undefined,
+        provider: {},
       };
     }
 
@@ -126,6 +141,8 @@ export class ManagedSandbox {
       command: inputOrCommand.command,
       args: inputOrCommand.args ?? [],
       policy: inputOrCommand.policy ?? (await this.#resolveDefaultPolicy()),
+      timeoutMs: inputOrCommand.timeoutMs,
+      provider: inputOrCommand.provider ?? {},
     };
   }
 
@@ -240,9 +257,10 @@ export class ManagedSandbox {
     command: string,
     args: readonly string[],
     policy: WorkspacePolicy,
+    provider: NonNullable<SandboxRunCommandOptions["provider"]>,
   ): Promise<CommandResult> {
     await this.#driver.applyPolicy(policy);
-    return this.#driver.runCommand(command, [...args]);
+    return this.#driver.runCommand(command, [...args], provider);
   }
 
   private async finishRun(input: RunFinishInput): Promise<void> {
@@ -308,7 +326,7 @@ export class ManagedSession implements WorkspaceSessionHandle {
     const normalized = await this.normalizeSessionInput(inputOrCommand, args);
     this.ensureCommandShape(normalized.command, normalized.args);
     await this.#driver.applyPolicy(normalized.policy);
-    return this.#driver.runCommand(normalized.command, [...normalized.args]);
+    return this.#driver.runCommand(normalized.command, [...normalized.args], normalized.provider);
   }
 
   async commit(): Promise<void> {
@@ -400,12 +418,14 @@ export class ManagedSession implements WorkspaceSessionHandle {
   private async normalizeSessionInput(
     inputOrCommand: string | SandboxRunCommandOptions,
     args: readonly string[],
-  ): Promise<Required<SandboxRunCommandOptions>> {
+  ): Promise<NormalizedRunCommandInput> {
     if (typeof inputOrCommand === "string") {
       return {
         command: inputOrCommand,
         args,
         policy: await this.resolveSessionPolicy(),
+        timeoutMs: undefined,
+        provider: {},
       };
     }
 
@@ -413,6 +433,8 @@ export class ManagedSession implements WorkspaceSessionHandle {
       command: inputOrCommand.command,
       args: inputOrCommand.args ?? [],
       policy: await this.resolveSessionPolicy(inputOrCommand.policy),
+      timeoutMs: inputOrCommand.timeoutMs,
+      provider: inputOrCommand.provider ?? {},
     };
   }
 
@@ -462,13 +484,13 @@ export class ManagedSession implements WorkspaceSessionHandle {
 }
 
 export class LazySandboxHandle implements WorkspaceSandboxHandle {
-  readonly #resolveSandbox: () => Promise<ManagedSandbox>;
+  readonly #resolveSandbox: (input?: SandboxRunCommandOptions) => Promise<ManagedSandbox>;
   readonly #openSession: (input?: { timeoutMs?: number }) => Promise<WorkspaceSessionHandle>;
   readonly #attachSession: () => Promise<WorkspaceSessionHandle>;
   readonly #getActiveLease: () => Promise<WorkspaceSandboxLease | null>;
 
   constructor(
-    resolveSandbox: () => Promise<ManagedSandbox>,
+    resolveSandbox: (input?: SandboxRunCommandOptions) => Promise<ManagedSandbox>,
     openSession: (input?: { timeoutMs?: number }) => Promise<WorkspaceSessionHandle>,
     attachSession: () => Promise<WorkspaceSessionHandle>,
     getActiveLease: () => Promise<WorkspaceSandboxLease | null>,
@@ -485,7 +507,10 @@ export class LazySandboxHandle implements WorkspaceSandboxHandle {
     inputOrCommand: string | SandboxRunCommandOptions,
     args: string[] = [],
   ): Promise<CommandResult> {
-    const sandbox = await this.#resolveSandbox();
+    const sandbox =
+      typeof inputOrCommand === "string"
+        ? await this.#resolveSandbox()
+        : await this.#resolveSandbox(inputOrCommand);
     if (typeof inputOrCommand === "string") {
       return sandbox.runCommand(inputOrCommand, args);
     }
