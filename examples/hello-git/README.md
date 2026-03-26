@@ -30,11 +30,16 @@ vercel link
 vercel env pull
 ```
 
-Set the GitHub repo to clone and the token Sandkit should use for GitHub access:
+Set the GitHub token Sandkit should use for GitHub access. `GITHUB_REPO` is optional and defaults to `giselles-ai/sandkit`:
+
+```sh
+export GITHUB_TOKEN=...
+```
+
+If you want a different repository:
 
 ```sh
 export GITHUB_REPO=org/name
-export GITHUB_TOKEN=...
 ```
 
 Install dependencies:

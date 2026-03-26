@@ -1,8 +1,8 @@
-import { requireGithubRepo } from "./lib/repo";
+import { resolveGithubRepo } from "./lib/repo";
 import { sandkit } from "./lib/sandkit";
 
 if (import.meta.main) {
-  requireGithubRepo();
+  resolveGithubRepo();
 
   const workspace = await sandkit.getWorkspace("hello-git");
   console.log("workspace:", workspace.id);

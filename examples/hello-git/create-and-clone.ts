@@ -1,26 +1,26 @@
 import { allowServices, github } from "@giselles-ai/sandkit";
 
-import { requireGithubRepo, requireGithubToken } from "./lib/repo";
+import { requireGithubToken, resolveGithubRepo } from "./lib/repo";
 import { sandkit } from "./lib/sandkit";
 
 if (import.meta.main) {
-  requireGithubRepo();
+  const repo = resolveGithubRepo();
   requireGithubToken();
 
   const workspace = await sandkit.createWorkspace({
     id: "hello-git",
-    name: process.env.GITHUB_REPO,
+    name: repo,
     policy: allowServices([github()]),
   });
   console.log("workspace:", workspace.id);
 
   const clone = await workspace.sandbox.runCommand({
     command: "git",
-    args: ["clone", `https://github.com/${process.env.GITHUB_REPO}`, "repo"],
+    args: ["clone", `https://github.com/${repo}`, "repo"],
   });
   if (clone.exitCode !== 0) {
     throw new Error(
-      `Failed to clone https://github.com/${process.env.GITHUB_REPO}: ${clone.stderr}`,
+      `Failed to clone https://github.com/${repo}: ${clone.stderr}`,
     );
   }
 
