@@ -2,11 +2,11 @@ import { Sandbox } from "@vercel/sandbox";
 
 import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
+  Command,
   CommandResult,
   PersistedSandboxState,
   SandboxSessionLease,
   SandboxDriver,
-  SandboxRunCommandOptions,
   WorkspaceSessionLog,
   WorkspaceSessionProcess,
   WorkspaceSessionProcessStartInput,
@@ -67,21 +67,31 @@ class VercelSandboxDriver implements SandboxDriver {
   async runCommand(
     command: string,
     args: string[],
-    options?: SandboxRunCommandOptions["provider"],
-  ): Promise<CommandResult> {
-    const rawResult = options?.vercel?.runViaDetachedWait
+    options?: { readonly detached?: boolean },
+  ): Promise<Command> {
+    const rawResult = options?.detached
       ? await this.#sandbox.runCommand({
           cmd: command,
           args,
           detached: true,
         })
       : await this.#sandbox.runCommand(command, args);
-    const finished = await this.#toCommandFinished(rawResult);
+
+    const logIterator = options?.detached ? getCommandLogIterator(rawResult) : undefined;
+    const commandLogs = logIterator
+      ? () => createEphemeralCommandLogStream(logIterator)
+      : undefined;
 
     return {
-      exitCode: finished.exitCode,
-      stdout: await finished.stdout(),
-      stderr: await finished.stderr(),
+      wait: async () => {
+        const finished = await this.#toCommandFinished(rawResult);
+        return {
+          exitCode: finished.exitCode,
+          stdout: await finished.stdout(),
+          stderr: await finished.stderr(),
+        };
+      },
+      logs: commandLogs,
     };
   }
 
@@ -105,7 +115,7 @@ class VercelSandboxDriver implements SandboxDriver {
     return {
       processId,
       wait: async (): Promise<CommandResult> => {
-        const finished = await started.wait();
+        const finished = await this.#toCommandFinished(started);
         return {
           exitCode: finished.exitCode,
           stdout: await finished.stdout(),
@@ -166,6 +176,28 @@ class VercelSandboxDriver implements SandboxDriver {
 
     return raw as VercelCommandFinished;
   }
+}
+
+function createEphemeralCommandLogStream(
+  logs: AsyncIterable<unknown>,
+): AsyncIterable<WorkspaceSessionLog> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      try {
+        for await (const log of logs) {
+          const normalized = normalizeCommandLog(log);
+          if (normalized) {
+            yield normalized;
+          }
+        }
+      } catch (cause) {
+        if (cause instanceof Error) {
+          throw cause;
+        }
+        throw new Error("Command logs failed.");
+      }
+    },
+  };
 }
 
 function isVercelCommandHandle(value: unknown): value is VercelCommandHandle {

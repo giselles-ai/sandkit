@@ -73,16 +73,20 @@ type CodexExecutionResult = {
   readonly exitCode: number;
 };
 const CODEX_RUN_TIMEOUT_MS = 10 * 60 * 1000;
-type CodexRunCommandOptions = Parameters<
-  Awaited<ReturnType<typeof sandkit.getWorkspace>>["sandbox"]["runCommand"]
->[0] & {
-  readonly timeoutMs?: number;
-  readonly provider?: {
-    readonly vercel?: {
-      readonly runViaDetachedWait?: boolean;
-    };
-  };
+type WorkflowDetachedCommand = {
+  wait(): Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }>;
 };
+
+type WorkflowDetachedRunCommand = (
+  input: Parameters<Awaited<ReturnType<typeof sandkit.getWorkspace>>["sandbox"]["runCommand"]>[0] & {
+    readonly timeoutMs?: number;
+    readonly detached: true;
+  },
+) => Promise<WorkflowDetachedCommand>;
 
 function formatUnknownError(error: unknown): string {
   if (error instanceof AggregateError) {
@@ -333,7 +337,9 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
   const prompt = buildWorkflowPrReviewPrompt(pr);
   let result: CodexExecutionResult & { stdout: string; stderr: string };
   try {
-    const commandResult = await workspace.sandbox.runCommand({
+    const runDetachedCommand = workspace.sandbox
+      .runCommand as unknown as WorkflowDetachedRunCommand;
+    const command = await runDetachedCommand({
       command: "codex",
       args: [
         "exec",
@@ -352,12 +358,9 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
       ],
       policy: allowService(codex()),
       timeoutMs: CODEX_RUN_TIMEOUT_MS,
-      provider: {
-        vercel: {
-          runViaDetachedWait: true,
-        },
-      },
-    } as CodexRunCommandOptions);
+      detached: true,
+    });
+    const commandResult = await command.wait();
     result = {
       exitCode: commandResult.exitCode,
       stdout: commandResult.stdout,

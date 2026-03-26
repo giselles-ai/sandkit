@@ -11,6 +11,8 @@ It keeps two paths explicit:
 
 An active session is an exclusive workspace lease. While a live session is open, `runCommand()` is unavailable until you attach to that session or commit it.
 
+Durable lock enforcement is currently in-process (`packages/sandkit` only). Concurrent durable commands for the same workspace are excluded while one is in flight in the same process.
+
 Provider-specific behavior still matters, but the public API stays centered on workspaces, policies, and durable state.
 
 ## Problem
@@ -93,6 +95,23 @@ const result = await workspace.sandbox.runCommand({
 });
 
 console.log(result.stdout.trim());
+```
+
+`runCommand(...)` (without `detached`) resolves to `CommandResult` only after the full unit-of-work is complete: process exit, snapshot/commit, and persist.
+
+For detached execution, pass `detached: true` and you get a `Command` object. Observe logs and then await durable completion:
+
+```ts
+const command = await workspace.sandbox.runCommand({
+  command: "sh",
+  args: ["-lc", "echo 'start'; sleep 1; echo 'done'"],
+  detached: true,
+});
+for await (const chunk of command.logs?.() ?? []) {
+  console.log(`${chunk.stream}: ${chunk.chunk}`);
+}
+
+const commandResult = await command.wait();
 ```
 
 Set `VERCEL_OIDC_TOKEN` for local runs or `VERCEL_ACCESS_TOKEN` in CI before creating a Vercel-backed sandbox.
