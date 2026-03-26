@@ -101,12 +101,22 @@ Set `VERCEL_OIDC_TOKEN` for local runs or `VERCEL_ACCESS_TOKEN` in CI before cre
 
 Service presets read default credentials from the environment when the policy is applied:
 
+- `npm()` allows the public npm registry host `registry.npmjs.org`
+- `bun()` allows Bun install/distribution hosts `bun.sh` and `bun.com`
 - `codex()` reads `CODEX_API_KEY`
 - `gemini()` reads `GEMINI_API_KEY`
 - `github()` reads `GITHUB_TOKEN` and maps it through Vercel Sandbox firewall transforms:
   - `Authorization: Basic <base64(x-access-token:<token>)>` on requests to `github.com`, intended for Git-over-HTTPS operations
   - `Authorization: Bearer <token>` on requests to `api.github.com`
   - no Authorization header for `*.githubusercontent.com`
+
+For JavaScript package bootstrap, prefer explicit service presets over `allowAll()`:
+
+```ts
+import { allowServices, bun, npm } from "@giselles-ai/sandkit";
+
+const policy = allowServices([bun(), npm()]);
+```
 
 For one-off overrides, pass the secret only on that run:
 

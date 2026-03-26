@@ -165,6 +165,8 @@ If you do not pass `database`, Sandkit defaults to the in-memory adapter. That d
 
 ## Policies
 
+- `npm()` allows the public npm registry host `registry.npmjs.org`
+- `bun()` allows Bun install/distribution hosts `bun.sh` and `bun.com`
 - `codex()` reads `CODEX_API_KEY`
 - `gemini()` reads `GEMINI_API_KEY`
 - `github()` reads `GITHUB_TOKEN` and maps it through Vercel Sandbox firewall transforms:
@@ -173,6 +175,14 @@ If you do not pass `database`, Sandkit defaults to the in-memory adapter. That d
   - no Authorization header for `*.githubusercontent.com`
 - `aiGateway()` reads `AI_GATEWAY_API_KEY` from host env and allows the hostname (plus wildcard) from `AI_GATEWAY_BASE_URL`.
   `AI_GATEWAY_BASE_URL` ports are ignored for allow-listing; only host/domain matches are used.
+
+For JavaScript package bootstrap, prefer explicit service presets over `allowAll()`:
+
+```ts
+import { allowServices, bun, npm } from "@giselles-ai/sandkit";
+
+const policy = allowServices([bun(), npm()]);
+```
 
 Durable default policy belongs to the workspace: use `createWorkspace({ policy: ... })` when you create it, or `workspace.setPolicy(...)` later. Pass `policy` to `runCommand(...)` for one-off overrides.
 
