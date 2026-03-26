@@ -413,7 +413,7 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
   const prompt = buildPrompt(pr);
   let result: CodexExecutionResult & { stdout: string; stderr: string };
   try {
-    const commandResult = await workspace.sandbox.runCommand({
+    const command = await workspace.sandbox.runCommand({
       command: "codex",
       args: [
         "exec",
@@ -432,12 +432,9 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
       ],
       policy: allowService(codex()),
       timeoutMs: CODEX_RUN_TIMEOUT_MS,
-      provider: {
-        vercel: {
-          runViaDetachedWait: true,
-        },
-      },
+      detached: true,
     });
+    const commandResult = await command.wait();
     result = {
       exitCode: commandResult.exitCode,
       stdout: commandResult.stdout,

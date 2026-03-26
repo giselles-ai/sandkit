@@ -5,6 +5,10 @@ import type {
   SandboxDriver,
   SandboxCreateOptions,
   SandboxSessionLease,
+  Command,
+  CommandResult,
+  WorkspaceRunCommandOptions,
+  WorkspaceRunCommandDetachedOptions,
   WorkspacePolicy,
   SharedSetup,
   WorkspaceRecord,
@@ -43,6 +47,10 @@ import {
   type WorkspaceSandboxTransition,
 } from "./workspace-state.ts";
 
+// Process-local lock to serialize durable work for a workspace within this runtime
+// instance. This does not coordinate across processes.
+const inFlightDurableCommands = new Set<string>();
+
 function setupStateFingerprint(
   command: string,
   args: readonly string[],
@@ -76,6 +84,23 @@ function sharedSetupRecordId(ctx: SandkitContext): string | null {
   }
 
   return sharedSetupStateId(ctx.adapter.id, ctx.options.setup);
+}
+
+function assertNoDurableCommandInFlight(workspaceId: string): void {
+  if (inFlightDurableCommands.has(workspaceId)) {
+    throw new Error(
+      "Cannot run a durable command while another durable command is still in flight.",
+    );
+  }
+}
+
+function beginDurableCommand(workspaceId: string): void {
+  assertNoDurableCommandInFlight(workspaceId);
+  inFlightDurableCommands.add(workspaceId);
+}
+
+function endDurableCommand(workspaceId: string): void {
+  inFlightDurableCommands.delete(workspaceId);
 }
 
 async function readSharedSetupState(ctx: SandkitContext): Promise<PersistedSandboxState | null> {
@@ -154,7 +179,7 @@ async function bootstrapSharedSetupState(
     ...options,
     policy: setup.policy,
   });
-  const result = await sandbox.runCommand(setup.command, [...(setup.args ?? [])]);
+  const result = await runCommandAndWait(sandbox, setup.command, setup.args);
   if (result.exitCode !== 0) {
     throw new Error(
       `Workspace setup failed with exit code ${result.exitCode}. ${result.stderr.trim()}`.trim(),
@@ -164,6 +189,15 @@ async function bootstrapSharedSetupState(
   const state = await sandbox.snapshot();
   await persistSharedSetupState(ctx, state);
   return state;
+}
+
+async function runCommandAndWait(
+  sandbox: SandboxDriver,
+  command: string,
+  args?: readonly string[],
+): Promise<CommandResult> {
+  const commandArgs = args ?? [];
+  return (await sandbox.runCommand(command, [...commandArgs])).wait();
 }
 
 async function resolveSharedSetupState(
@@ -326,17 +360,25 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
         "Cannot run command while a sandbox session is active. Use attachSession() to reuse it or commit the session first.",
       );
     }
+    assertNoDurableCommandInFlight(this.#record.id);
+    beginDurableCommand(this.#record.id);
 
     const workspace = await this.resolveLatestWorkspace();
-    const sandbox = await this.resolveSandboxDriver(workspace, {
-      timeoutMs: normalizeRunCommandTimeoutMs(input?.timeoutMs),
-    });
+    try {
+      const sandbox = await this.resolveSandboxDriver(workspace, {
+        timeoutMs: normalizeRunCommandTimeoutMs(input?.timeoutMs),
+      });
 
-    return this.createManagedSandbox(sandbox);
+      return this.createManagedSandbox(sandbox);
+    } catch (error) {
+      endDurableCommand(this.#record.id);
+      throw error;
+    }
   }
 
   async openSession(input?: { timeoutMs?: number }): Promise<WorkspaceSessionHandle> {
     await this.resolveLatestWorkspace();
+    assertNoDurableCommandInFlight(this.#record.id);
     if (await this.resolveAttachableSession()) {
       throw new Error("A sandbox session is already active for this workspace.");
     }
@@ -474,13 +516,65 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   }
 
   private createManagedSandbox(sandbox: SandboxDriver): ManagedSandbox {
-    return new ManagedSandbox(
+    const managed = new ManagedSandbox(
       sandbox,
       async () => this.resolveDefaultPolicy(),
       async (commit: SandboxCommit) =>
         this.persistSandboxState(transitionAfterCommandCommit(commit, new Date().toISOString())),
       this.createRunLifecycle(sandbox),
     );
+
+    const workspaceId = this.#record.id;
+    const originalRunCommand = managed.runCommand.bind(managed);
+    const wrappedRunCommand: {
+      (command: string, args: string[]): Promise<Command>;
+      (input: WorkspaceRunCommandOptions): Promise<Command>;
+      (input: WorkspaceRunCommandDetachedOptions): Promise<Command>;
+      (
+        inputOrCommand: string | WorkspaceRunCommandOptions | WorkspaceRunCommandDetachedOptions,
+        args?: string[],
+      ): Promise<Command>;
+    } = async (
+      inputOrCommand: string | WorkspaceRunCommandOptions | WorkspaceRunCommandDetachedOptions,
+      args: string[] = [],
+    ): Promise<Command> => {
+      let releaseCalled = false;
+      const release = async () => {
+        if (releaseCalled) {
+          return;
+        }
+        releaseCalled = true;
+        endDurableCommand(workspaceId);
+      };
+
+      try {
+        const command =
+          typeof inputOrCommand === "string"
+            ? await originalRunCommand(inputOrCommand, args)
+            : await originalRunCommand(inputOrCommand);
+
+        const completion = (async () => {
+          try {
+            return await command.wait();
+          } finally {
+            await release();
+          }
+        })();
+        void completion.catch(() => {});
+
+        return {
+          wait: () => completion,
+          logs: command.logs,
+        };
+      } catch (error) {
+        await release();
+        throw error;
+      }
+    };
+
+    managed.runCommand = wrappedRunCommand;
+
+    return managed;
   }
 
   private makeSandboxDriverOptions(

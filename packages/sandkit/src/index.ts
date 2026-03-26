@@ -1,5 +1,14 @@
 export { Sandkit, createSandkit } from "./core/sandkit.ts";
-export type { SandkitOptions, WorkspaceCreateOptions, SharedSetup } from "./types.ts";
+export type {
+  Command,
+  CommandResult,
+  WorkspaceRunCommandOptions,
+  WorkspaceRunCommandDetachedOptions,
+  WorkspaceSessionRunCommandOptions,
+  SandkitOptions,
+  WorkspaceCreateOptions,
+  SharedSetup,
+} from "./types.ts";
 export type {
   PublicWorkspaceHandle,
   WorkspaceDescriptor,

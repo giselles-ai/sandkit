@@ -84,7 +84,7 @@ async function runSmoke(): Promise<void> {
     throw new Error("Smoke failed: expected CODEX_API_KEY to compile into authorization header");
   }
 
-  const githubEnvCompiled = compileVercelNetworkPolicy(github());
+  const githubEnvCompiled = compileVercelNetworkPolicy(allowService(github()));
   expectAuthorizationHeader(
     githubEnvCompiled,
     "github.com",
@@ -100,7 +100,9 @@ async function runSmoke(): Promise<void> {
     throw new Error("Smoke failed: expected explicit apiKey to compile into authorization header");
   }
 
-  const explicitGithubCompiled = compileVercelNetworkPolicy(github({ token: "explicit-secret" }));
+  const explicitGithubCompiled = compileVercelNetworkPolicy(
+    allowService(github({ token: "explicit-secret" })),
+  );
   expectAuthorizationHeader(
     explicitGithubCompiled,
     "github.com",

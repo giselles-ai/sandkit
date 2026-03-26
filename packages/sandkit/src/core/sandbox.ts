@@ -1,8 +1,12 @@
 import type { WorkspacePolicy } from "../policies/types.ts";
 import type {
   CommandResult,
+  Command,
+  WorkspaceSessionRunCommandOptions,
   SandboxDriver,
   SandboxRunCommandOptions,
+  WorkspaceRunCommandOptions,
+  WorkspaceRunCommandDetachedOptions,
   WorkspaceSessionProcessStartInput,
   WorkspaceSessionProcess,
   WorkspaceSandboxLease,
@@ -11,7 +15,8 @@ import { makeSnapshotCommit, type SandboxCommit } from "./workspace-state.ts";
 
 export interface WorkspaceSandboxHandle {
   runCommand(command: string, args: string[]): Promise<CommandResult>;
-  runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  runCommand(input: WorkspaceRunCommandOptions): Promise<CommandResult>;
+  runCommand(input: WorkspaceRunCommandDetachedOptions): Promise<Command>;
   /**
    * Opens a live sandbox lease. timeoutMs overrides the provider's default
    * lease timeout for this session start; it does not change runCommand()
@@ -24,7 +29,7 @@ export interface WorkspaceSandboxHandle {
 
 export interface WorkspaceSessionHandle {
   exec(command: string, args: string[]): Promise<CommandResult>;
-  exec(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  exec(input: WorkspaceSessionRunCommandOptions): Promise<CommandResult>;
   commit(): Promise<void>;
   /**
    * Sets a non-durable, session-scoped policy override for subsequent session
@@ -77,7 +82,12 @@ type NormalizedRunCommandInput = {
   readonly args: readonly string[];
   readonly policy: WorkspacePolicy;
   readonly timeoutMs: number | undefined;
-  readonly provider: NonNullable<SandboxRunCommandOptions["provider"]>;
+  readonly detached: boolean;
+};
+type SessionRunCommandInput = {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly policy: WorkspacePolicy;
 };
 
 type CommitHook = (commit: SandboxCommit) => Promise<void>;
@@ -105,12 +115,13 @@ export class ManagedSandbox {
     return this.#driver.id;
   }
 
-  async runCommand(command: string, args: string[]): Promise<CommandResult>;
-  async runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  async runCommand(command: string, args: string[]): Promise<Command>;
+  async runCommand(input: WorkspaceRunCommandOptions): Promise<Command>;
+  async runCommand(input: WorkspaceRunCommandDetachedOptions): Promise<Command>;
   async runCommand(
     inputOrCommand: string | SandboxRunCommandOptions,
     args: string[] = [],
-  ): Promise<CommandResult> {
+  ): Promise<Command> {
     const normalized = await this.normalizeRunCommandInput(inputOrCommand, args);
     this.ensureCommandShape(normalized.command, normalized.args);
     return this.runUnitOfWork(normalized.command, normalized.args, normalized.policy, () =>
@@ -118,7 +129,7 @@ export class ManagedSandbox {
         normalized.command,
         normalized.args,
         normalized.policy,
-        normalized.provider,
+        normalized.detached,
       ),
     );
   }
@@ -133,7 +144,7 @@ export class ManagedSandbox {
         args,
         policy: await this.#resolveDefaultPolicy(),
         timeoutMs: undefined,
-        provider: {},
+        detached: false,
       };
     }
 
@@ -142,7 +153,7 @@ export class ManagedSandbox {
       args: inputOrCommand.args ?? [],
       policy: inputOrCommand.policy ?? (await this.#resolveDefaultPolicy()),
       timeoutMs: inputOrCommand.timeoutMs,
-      provider: inputOrCommand.provider ?? {},
+      detached: "detached" in inputOrCommand ? inputOrCommand.detached : false,
     };
   }
 
@@ -160,79 +171,130 @@ export class ManagedSandbox {
     command: string,
     args: readonly string[],
     effectivePolicy: WorkspacePolicy,
-    operation: () => Promise<CommandResult>,
-  ): Promise<CommandResult> {
+    operation: () => Promise<Command>,
+  ): Promise<Command> {
     const now = new Date().toISOString();
     const runId = await this.startRun(command, args, effectivePolicy, now);
-    let commandError: unknown | undefined;
-    let commandResult: CommandResult | undefined;
-
+    let commandHandle: Command;
     try {
-      commandResult = await operation();
-    } catch (error) {
-      commandError = error;
-    }
+      commandHandle = await operation();
+    } catch (commandError) {
+      const finishedAt = new Date().toISOString();
+      let providerCommit: unknown;
+      let finalizeError: unknown | undefined;
 
-    const finishedAt = new Date().toISOString();
-    const commandStatus: "succeeded" | "failed" =
-      commandError === undefined
-        ? commandResult?.exitCode === 0
-          ? "succeeded"
-          : "failed"
-        : "failed";
-    let providerCommit: unknown;
-    let finalizeError: unknown | undefined;
+      try {
+        const commit = await this.snapshotWithFallback();
+        providerCommit = commit.state;
 
-    try {
-      const commit = await this.snapshotWithFallback();
-      providerCommit = commit.state;
-
-      if (this.#onCommit) {
-        await this.persistCommit(commit);
+        if (this.#onCommit) {
+          await this.persistCommit(commit);
+        }
+      } catch (error) {
+        finalizeError = error;
+        providerCommit = undefined;
       }
-    } catch (error) {
-      finalizeError = error;
-      providerCommit = undefined;
-    }
 
-    const finalRunStatus: "succeeded" | "failed" =
-      commandError === undefined && finalizeError === undefined ? commandStatus : "failed";
-
-    try {
-      if (runId) {
-        await this.finishRun({
-          runId,
-          status: finalRunStatus,
-          providerCommit,
-          finishedAt,
-          exitCode: commandResult?.exitCode,
-          stdout: commandResult?.stdout,
-          stderr: commandResult?.stderr,
-        });
+      try {
+        if (runId) {
+          await this.finishRun({
+            runId,
+            status: "failed",
+            providerCommit,
+            finishedAt,
+          });
+        }
+      } catch (error) {
+        finalizeError = finalizeError ?? error;
       }
-    } catch (error) {
-      finalizeError = finalizeError ?? error;
-    }
 
-    if (commandError !== undefined) {
       if (finalizeError !== undefined) {
         throw new AggregateError(
           [commandError, finalizeError],
           "Sandbox command failed and unit-of-work durability finalization did not complete.",
         );
       }
+
       throw commandError;
     }
 
-    if (finalizeError !== undefined) {
-      throw finalizeError;
-    }
+    const waitResult = (async () => {
+      let commandError: unknown | undefined;
+      let commandResult: CommandResult | undefined;
+      let providerCommit: unknown;
+      let finalizeError: unknown | undefined;
 
-    if (!commandResult) {
-      throw new Error("Command result was missing after successful execution.");
-    }
+      try {
+        commandResult = await commandHandle.wait();
+      } catch (error) {
+        commandError = error;
+      }
 
-    return commandResult;
+      const finishedAt = new Date().toISOString();
+      const commandStatus: "succeeded" | "failed" =
+        commandError === undefined
+          ? commandResult?.exitCode === 0
+            ? "succeeded"
+            : "failed"
+          : "failed";
+
+      try {
+        const commit = await this.snapshotWithFallback();
+        providerCommit = commit.state;
+
+        if (this.#onCommit) {
+          await this.persistCommit(commit);
+        }
+      } catch (error) {
+        finalizeError = error;
+        providerCommit = undefined;
+      }
+
+      const finalRunStatus: "succeeded" | "failed" =
+        commandError === undefined && finalizeError === undefined ? commandStatus : "failed";
+
+      try {
+        if (runId) {
+          await this.finishRun({
+            runId,
+            status: finalRunStatus,
+            providerCommit,
+            finishedAt,
+            exitCode: commandResult?.exitCode,
+            stdout: commandResult?.stdout,
+            stderr: commandResult?.stderr,
+          });
+        }
+      } catch (error) {
+        finalizeError = finalizeError ?? error;
+      }
+
+      if (commandError !== undefined) {
+        if (finalizeError !== undefined) {
+          throw new AggregateError(
+            [commandError, finalizeError],
+            "Sandbox command failed and unit-of-work durability finalization did not complete.",
+          );
+        }
+        throw commandError;
+      }
+
+      if (finalizeError !== undefined) {
+        throw finalizeError;
+      }
+
+      if (!commandResult) {
+        throw new Error("Command result was missing after successful execution.");
+      }
+
+      return commandResult;
+    })();
+    void waitResult.catch(() => {});
+
+    return {
+      wait: async () => waitResult,
+      logs: commandHandle.logs,
+    };
   }
 
   private async startRun(
@@ -257,10 +319,10 @@ export class ManagedSandbox {
     command: string,
     args: readonly string[],
     policy: WorkspacePolicy,
-    provider: NonNullable<SandboxRunCommandOptions["provider"]>,
-  ): Promise<CommandResult> {
+    detached: boolean,
+  ): Promise<Command> {
     await this.#driver.applyPolicy(policy);
-    return this.#driver.runCommand(command, [...args], provider);
+    return this.#driver.runCommand(command, [...args], { detached });
   }
 
   private async finishRun(input: RunFinishInput): Promise<void> {
@@ -317,16 +379,20 @@ export class ManagedSession implements WorkspaceSessionHandle {
   }
 
   async exec(command: string, args: string[]): Promise<CommandResult>;
-  async exec(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  async exec(input: WorkspaceSessionRunCommandOptions): Promise<CommandResult>;
   async exec(
-    inputOrCommand: string | SandboxRunCommandOptions,
+    inputOrCommand: string | WorkspaceSessionRunCommandOptions,
     args: string[] = [],
   ): Promise<CommandResult> {
     await this.assertSessionActive();
     const normalized = await this.normalizeSessionInput(inputOrCommand, args);
     this.ensureCommandShape(normalized.command, normalized.args);
     await this.#driver.applyPolicy(normalized.policy);
-    return this.#driver.runCommand(normalized.command, [...normalized.args], normalized.provider);
+    return (
+      await this.#driver.runCommand(normalized.command, [...normalized.args], {
+        detached: false,
+      })
+    ).wait();
   }
 
   async commit(): Promise<void> {
@@ -416,25 +482,25 @@ export class ManagedSession implements WorkspaceSessionHandle {
   }
 
   private async normalizeSessionInput(
-    inputOrCommand: string | SandboxRunCommandOptions,
+    inputOrCommand: string | WorkspaceSessionRunCommandOptions,
     args: readonly string[],
-  ): Promise<NormalizedRunCommandInput> {
+  ): Promise<SessionRunCommandInput> {
     if (typeof inputOrCommand === "string") {
       return {
         command: inputOrCommand,
         args,
         policy: await this.resolveSessionPolicy(),
-        timeoutMs: undefined,
-        provider: {},
       };
+    }
+
+    if ("detached" in inputOrCommand) {
+      throw new Error("session exec does not support detached execution.");
     }
 
     return {
       command: inputOrCommand.command,
       args: inputOrCommand.args ?? [],
       policy: await this.resolveSessionPolicy(inputOrCommand.policy),
-      timeoutMs: inputOrCommand.timeoutMs,
-      provider: inputOrCommand.provider ?? {},
     };
   }
 
@@ -502,19 +568,25 @@ export class LazySandboxHandle implements WorkspaceSandboxHandle {
   }
 
   async runCommand(command: string, args: string[]): Promise<CommandResult>;
-  async runCommand(input: SandboxRunCommandOptions): Promise<CommandResult>;
+  async runCommand(input: WorkspaceRunCommandOptions): Promise<CommandResult>;
+  async runCommand(input: WorkspaceRunCommandDetachedOptions): Promise<Command>;
   async runCommand(
     inputOrCommand: string | SandboxRunCommandOptions,
     args: string[] = [],
-  ): Promise<CommandResult> {
+  ): Promise<CommandResult | Command> {
     const sandbox =
       typeof inputOrCommand === "string"
         ? await this.#resolveSandbox()
         : await this.#resolveSandbox(inputOrCommand);
     if (typeof inputOrCommand === "string") {
-      return sandbox.runCommand(inputOrCommand, args);
+      return sandbox.runCommand(inputOrCommand, args).then((command) => command.wait());
     }
-    return sandbox.runCommand(inputOrCommand);
+    const command = await sandbox.runCommand(inputOrCommand);
+    if ("detached" in inputOrCommand && inputOrCommand.detached === true) {
+      return command;
+    }
+
+    return command.wait();
   }
 
   async openSession(input?: { timeoutMs?: number }): Promise<WorkspaceSessionHandle> {

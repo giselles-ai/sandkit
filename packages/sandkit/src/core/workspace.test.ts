@@ -5,13 +5,16 @@ import { internalSandboxProvider, mockSandbox } from "../integrations/mock.ts";
 import { codex } from "../policies/codex.ts";
 import { allowAll, allowServices } from "../policies/dsl.ts";
 import type {
+  Command,
   CommandResult,
   PersistedSandboxState,
+  SandboxDriver,
   SandboxDriverFactory,
   WorkspaceRecord,
   WorkspacePolicy,
   SandkitOptions,
 } from "../types.ts";
+import type { WorkspaceSessionHandle } from "./sandbox.ts";
 import { Sandkit, createSandkit } from "./sandkit.ts";
 import { sharedSetupStateId } from "./workspace.ts";
 
@@ -51,8 +54,10 @@ function createWorkspaceCreateOptionRecorder() {
             expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
           };
         },
-        async runCommand(): Promise<CommandResult> {
-          return { exitCode: 0, stdout: "", stderr: "" };
+        async runCommand(): Promise<Command> {
+          return {
+            wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+          };
         },
         async snapshot() {
           return {
@@ -86,8 +91,10 @@ function createWorkspaceCreateOptionRecorder() {
             expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
           };
         },
-        async runCommand(): Promise<CommandResult> {
-          return { exitCode: 0, stdout: "", stderr: "" };
+        async runCommand(): Promise<Command> {
+          return {
+            wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+          };
         },
         async snapshot() {
           return {
@@ -131,41 +138,49 @@ function createSetupRecoveryDriverFactory(): SandboxDriverFactory {
       };
     }
 
-    async runCommand(command: string, args: string[]): Promise<CommandResult> {
+    async runCommand(command: string, args: string[]): Promise<Command> {
+      let result: CommandResult;
       switch (command) {
         case "echo": {
           const redirectIndex = args.indexOf(">");
           if (redirectIndex === -1) {
-            return {
+            result = {
               exitCode: 0,
               stderr: "",
               stdout: `${args.join(" ")}\n`,
             };
+            break;
           }
 
           const target = args[redirectIndex + 1];
           if (!target) {
-            return { exitCode: 1, stderr: "missing redirect target\n", stdout: "" };
+            result = { exitCode: 1, stderr: "missing redirect target\n", stdout: "" };
+            break;
           }
 
           this.#files[target] = args.slice(0, redirectIndex).join(" ");
-          return { exitCode: 0, stderr: "", stdout: "" };
+          result = { exitCode: 0, stderr: "", stdout: "" };
+          break;
         }
         case "cat": {
           const target = args[0];
           if (!target || this.#files[target] === undefined) {
-            return { exitCode: 1, stderr: `cat: ${target}: missing\n`, stdout: "" };
+            result = { exitCode: 1, stderr: `cat: ${target}: missing\n`, stdout: "" };
+            break;
           }
 
-          return {
+          result = {
             exitCode: 0,
             stderr: "",
             stdout: `${this.#files[target]}\n`,
           };
+          break;
         }
         default:
-          return { exitCode: 127, stderr: `unsupported: ${command}\n`, stdout: "" };
+          result = { exitCode: 127, stderr: `unsupported: ${command}\n`, stdout: "" };
+          break;
       }
+      return { wait: async () => result };
     }
 
     async snapshot(): Promise<PersistedSandboxState> {
@@ -230,8 +245,10 @@ function createBootstrapRecorderDriverFactory() {
             expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
           };
         },
-        async runCommand(): Promise<CommandResult> {
-          return { exitCode: 0, stdout: "", stderr: "" };
+        async runCommand(): Promise<Command> {
+          return {
+            wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+          };
         },
         async snapshot() {
           snapshotCount += 1;
@@ -257,8 +274,10 @@ function createBootstrapRecorderDriverFactory() {
             expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
           };
         },
-        async runCommand(): Promise<CommandResult> {
-          return { exitCode: 0, stdout: "", stderr: "" };
+        async runCommand(): Promise<Command> {
+          return {
+            wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+          };
         },
         async snapshot() {
           snapshotCount += 1;
@@ -702,5 +721,140 @@ describe("Workspace setup lifecycle", () => {
         args: ["hello.txt"],
       }),
     ).rejects.toThrow(/contains an explicit secret and cannot be stored durably/);
+  });
+
+  test("prevents overlapping durable commands and openSession while a durable command is in flight", async () => {
+    const releaseCommandWaits: Array<(result: CommandResult) => void> = [];
+    const workspaceId = "in-flight-durable-lock";
+    const createCountCalls: string[] = [];
+    const resumeCountCalls: string[] = [];
+
+    const createDurableLockDriver = (
+      id: string,
+      runCommandFactory: () => Promise<Command> = () =>
+        Promise.resolve({
+          wait: async () => ({
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+          }),
+        } as Command),
+    ): SandboxDriver => ({
+      id,
+      provider: "durable-lock-test",
+      async applyPolicy() {},
+      async getSessionLease() {
+        const observedAt = new Date().toISOString();
+        return {
+          sandboxId: id,
+          observedAt,
+          expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
+          remainingMs: 60_000,
+        };
+      },
+      async runCommand(): Promise<Command> {
+        return runCommandFactory();
+      },
+      async snapshot() {
+        return {
+          kind: "capture",
+          sessionId: id,
+          state: { files: {} },
+        };
+      },
+    });
+
+    const createDriverFromState = (snapshotState?: PersistedSandboxState) => {
+      const resumedId =
+        snapshotState && snapshotState.kind === "sandbox-session"
+          ? snapshotState.sessionId
+          : `durable-lock-resume-${resumeCountCalls.length + 1}`;
+      return createDurableLockDriver(resumedId);
+    };
+
+    const factory = {
+      async createSandbox() {
+        createCountCalls.push("create");
+        return createDurableLockDriver(`durable-lock-${createCountCalls.length}`, async () => {
+          const wait = new Promise<CommandResult>((resolve) => {
+            releaseCommandWaits.push(resolve);
+          });
+          return {
+            wait: async () => wait,
+          };
+        });
+      },
+      async resumeSandbox(_workspace: WorkspaceRecord, snapshot: PersistedSandboxState) {
+        resumeCountCalls.push("resume");
+        return createDriverFromState(snapshot);
+      },
+    };
+
+    const sandkit = createSandkit({
+      sandbox: internalSandboxProvider(factory),
+    });
+    const workspace = await sandkit.createWorkspace({ id: workspaceId });
+    const _firstCommand = await workspace.sandbox.runCommand({
+      command: "sleep",
+      args: ["100"],
+      detached: true,
+    });
+
+    await expect(
+      workspace.sandbox.runCommand({
+        command: "echo",
+        args: ["another"],
+      }),
+    ).rejects.toThrow(/durable command is still in flight/i);
+
+    await expect(workspace.sandbox.openSession()).rejects.toThrow(
+      /durable command is still in flight/i,
+    );
+
+    const attached = await sandkit.getWorkspace(workspace.id);
+    await expect(attached.sandbox.openSession()).rejects.toThrow(
+      /durable command is still in flight/i,
+    );
+
+    // Resolve detached completion without calling firstCommand.wait().
+    releaseCommandWaits[0]({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    let sessionAfterCompletion: WorkspaceSessionHandle | undefined;
+    for (let i = 0; i < 25; i++) {
+      try {
+        sessionAfterCompletion = await workspace.sandbox.openSession();
+        break;
+      } catch (error) {
+        if (!/durable command is still in flight/i.test(`${error}`)) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+
+    if (!sessionAfterCompletion) {
+      throw new Error("Expected durable lock to release after detached completion.");
+    }
+
+    await sessionAfterCompletion.commit();
+
+    const againCommand = workspace.sandbox.runCommand({
+      command: "echo",
+      args: ["again"],
+    });
+    releaseCommandWaits[1]?.({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
+    await expect(againCommand).resolves.toEqual({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
   });
 });

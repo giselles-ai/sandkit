@@ -6,6 +6,7 @@
     "smoke": "bun run index.ts",
     "smoke:session": "bun run session-smoke.ts",
     "smoke:codex-exec": "bun run codex-exec-smoke.ts",
+    "smoke:logs": "bun run logs-smoke.ts",
     "smoke:drizzle": "bun run drizzle-smoke.ts",
     "smoke:shared-setup": "bun run shared-setup-smoke.ts",
     "smoke:corruption": "bun run corruption-smoke.ts",
