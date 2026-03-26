@@ -268,21 +268,42 @@ function ResultOutput({ output }: { output: WorkflowPrReviewFinalOutput }) {
 }
 
 function WorkflowOverview({ activeRun }: { activeRun: WorkflowPrReviewRun | null }) {
+  const [expandedSteps, setExpandedSteps] = useState<
+    Partial<Record<WorkflowPrReviewStep, boolean>>
+  >({});
   const started = new Set<WorkflowPrReviewStep>();
   const completed = new Set<WorkflowPrReviewStep>();
+  const latestStepDetail = new Map<WorkflowPrReviewStep, { detail?: string; ts: string }>();
+  const liveCommandOutput = (activeRun?.events ?? []).filter(
+    (event): event is Extract<WorkflowPrReviewRunEvent, { type: "live_command_output" }> =>
+      event.type === "live_command_output",
+  );
 
   for (const event of activeRun?.events ?? []) {
-    if (event.type !== "step") {
+    if (event.type === "step") {
+      latestStepDetail.set(event.step, {
+        detail: event.detail,
+        ts: event.ts,
+      });
+      if (event.status === "started") {
+        started.add(event.step);
+        continue;
+      }
+
+      completed.add(event.step);
       continue;
     }
-
-    if (event.status === "started") {
-      started.add(event.step);
-      continue;
-    }
-
-    completed.add(event.step);
   }
+
+  useEffect(() => {
+    if (liveCommandOutput.length === 0) {
+      return;
+    }
+
+    setExpandedSteps((current) =>
+      current.run_codex_exec === undefined ? { ...current, run_codex_exec: true } : current,
+    );
+  }, [liveCommandOutput.length]);
 
   return (
     <section style={{ display: "grid", gap: "0.6rem" }}>
@@ -294,24 +315,98 @@ function WorkflowOverview({ activeRun }: { activeRun: WorkflowPrReviewRun | null
             : activeRun?.display.step === step || started.has(step)
               ? "running"
               : "pending";
+          const detail = latestStepDetail.get(step);
+          const isCodexStep = step === "run_codex_exec";
+          const hasLiveOutput = isCodexStep && liveCommandOutput.length > 0;
+          const isExpanded = expandedSteps[step] ?? (state === "running" || hasLiveOutput);
 
           return (
-            <div
+            <details
               key={step}
+              open={isExpanded}
+              onToggle={(event) => {
+                const nextOpen = event.currentTarget.open;
+                setExpandedSteps((current) =>
+                  current[step] === nextOpen ? current : { ...current, [step]: nextOpen },
+                );
+              }}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "1rem",
-                padding: "0.7rem 0.8rem",
                 border: "1px solid #d0d7de",
                 borderRadius: 8,
                 background:
                   state === "done" ? "#eefbf3" : state === "running" ? "#eef4ff" : "#f8fafc",
               }}
             >
-              <span>{stepLabels[step]}</span>
-              <strong>{state}</strong>
-            </div>
+              <summary
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "1rem",
+                  padding: "0.7rem 0.8rem",
+                  cursor: "pointer",
+                  listStyle: "none",
+                }}
+              >
+                <span>{stepLabels[step]}</span>
+                <strong>{state}</strong>
+              </summary>
+              <div
+                style={{
+                  display: "grid",
+                  gap: "0.45rem",
+                  padding: "0 0.8rem 0.8rem",
+                  borderTop: "1px solid rgba(208, 215, 222, 0.75)",
+                }}
+              >
+                {detail?.detail ? (
+                  <div style={{ marginTop: "0.7rem", fontSize: "0.92rem" }}>{detail.detail}</div>
+                ) : null}
+                {detail ? (
+                  <div style={{ fontSize: "0.8rem", color: "#4b5563" }}>{detail.ts}</div>
+                ) : null}
+                {isCodexStep ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: "0.45rem",
+                      marginTop: detail ? "0.25rem" : "0.7rem",
+                      padding: "0.55rem",
+                      borderRadius: 8,
+                      background: "#0b1020",
+                      color: "#f8fafc",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>Live command output</div>
+                    {liveCommandOutput.length > 0 ? (
+                      liveCommandOutput.map((event) => (
+                        <div
+                          key={`${event.index}-${event.stream}`}
+                          style={{ display: "grid", gap: "0.2rem" }}
+                        >
+                          <div style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
+                            {event.stream === "stdout" ? "STDOUT" : "STDERR"}
+                          </div>
+                          <pre
+                            style={{
+                              margin: 0,
+                              whiteSpace: "pre-wrap",
+                              fontSize: "0.84rem",
+                              color: event.stream === "stderr" ? "#fca5a5" : "#f8fafc",
+                            }}
+                          >
+                            {event.chunk}
+                          </pre>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ fontSize: "0.84rem", color: "#94a3b8" }}>
+                        {state === "running" ? "Waiting for live output..." : "No live output."}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </details>
           );
         })}
       </div>
@@ -320,55 +415,6 @@ function WorkflowOverview({ activeRun }: { activeRun: WorkflowPrReviewRun | null
           current: <strong>{activeRun.display.lastMessage}</strong>
         </p>
       ) : null}
-    </section>
-  );
-}
-
-function EventLog({ events }: { events: WorkflowPrReviewRunEvent[] }) {
-  if (events.length === 0) {
-    return null;
-  }
-
-  return (
-    <section style={{ display: "grid", gap: "0.6rem" }}>
-      <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Events</h2>
-      <div
-        style={{
-          display: "grid",
-          gap: "0.45rem",
-          maxHeight: "18rem",
-          overflow: "auto",
-        }}
-      >
-        {events.map((event) => (
-          <div
-            key={`${event.index}-${event.type}`}
-            style={{
-              border: "1px solid #d0d7de",
-              borderRadius: 8,
-              padding: "0.7rem 0.8rem",
-              background: "#fff",
-            }}
-          >
-            <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>
-              {event.type === "step"
-                ? `${stepLabels[event.step]}: ${event.status}`
-                : event.type === "result"
-                  ? "result"
-                  : "error"}
-            </div>
-            {"detail" in event && event.detail ? (
-              <div style={{ marginTop: "0.25rem", fontSize: "0.92rem" }}>{event.detail}</div>
-            ) : null}
-            {event.type === "error" ? (
-              <div style={{ marginTop: "0.25rem", fontSize: "0.92rem" }}>{event.message}</div>
-            ) : null}
-            <div style={{ marginTop: "0.25rem", fontSize: "0.8rem", color: "#4b5563" }}>
-              {event.ts}
-            </div>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }
@@ -627,16 +673,8 @@ export default function HomePage() {
           </div>
         </section>
 
-        <div
-          style={{
-            display: "grid",
-            gap: "1rem",
-            gridTemplateColumns: "minmax(18rem, 24rem) minmax(0, 1fr)",
-            alignItems: "start",
-          }}
-        >
+        <div style={{ display: "grid", gap: "1rem", alignItems: "start" }}>
           <WorkflowOverview activeRun={activeRun} />
-          <EventLog events={activeRun?.events ?? []} />
         </div>
 
         {runOutput ? <ResultOutput output={runOutput} /> : null}

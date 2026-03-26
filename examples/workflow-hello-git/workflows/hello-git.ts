@@ -5,6 +5,11 @@ import { z } from "zod";
 import { sandkit } from "@/lib/sandkit";
 import { createWorkflowPrReviewRunEvent } from "@/lib/workflow-hello-git-events";
 
+import type {
+  Command,
+  WorkspaceRunCommandDetachedOptions,
+} from "../../../packages/sandkit/src/types.ts";
+
 type ParsedPullRequest = {
   readonly url: string;
   readonly owner: string;
@@ -88,7 +93,10 @@ const REPORT_PATH = "repo/.codex/pr-verification.report.json";
 const STDOUT_PATH = "repo/.codex/codex.stdout.ndjson";
 const STDERR_PATH = "repo/.codex/codex.stderr.log";
 const SCHEMA_PATH = "repo/.codex/report.schema.json";
-const CODEX_RUN_TIMEOUT_MS = 10 * 60 * 1000;
+const CODEX_TIMEOUT_MS = 10 * 60 * 1000;
+type WorkflowEventIndex = {
+  value: number;
+};
 
 function toStrictJsonSchema(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -153,6 +161,12 @@ function formatUnknownError(error: unknown): string {
   return String(error);
 }
 
+function nextEventIndex(counter: WorkflowEventIndex): number {
+  const index = counter.value;
+  counter.value += 1;
+  return index;
+}
+
 function createReviewSchemaJson(): string {
   const jsonSchema = toStrictJsonSchema(z.toJSONSchema(workflowPrReviewReportSchema)) as Record<
     string,
@@ -206,6 +220,27 @@ async function writeResultEvent(
       createWorkflowPrReviewRunEvent(index, {
         type: "result",
         finalOutput,
+      }),
+    )}\n`,
+  );
+  writer.releaseLock();
+}
+
+async function writeLiveCommandOutputEvent(
+  index: number,
+  stream: "stdout" | "stderr",
+  chunk: string,
+): Promise<void> {
+  "use step";
+
+  const writable = getWritable<string>();
+  const writer = writable.getWriter();
+  await writer.write(
+    `${JSON.stringify(
+      createWorkflowPrReviewRunEvent(index, {
+        type: "live_command_output",
+        stream,
+        chunk,
       }),
     )}\n`,
   );
@@ -388,11 +423,19 @@ function buildPrompt(pr: ParsedPullRequest): string {
   ].join("\n");
 }
 
-async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult> {
+async function runCodexExec(
+  pr: ParsedPullRequest,
+  eventIndex: WorkflowEventIndex,
+): Promise<CodexExecutionResult> {
   "use step";
 
   const workspace = await resolveWorkspace(pr);
-  await writeStepEvent(8, "run_codex_exec", "started", "Running codex exec --yolo...");
+  await writeStepEvent(
+    nextEventIndex(eventIndex),
+    "run_codex_exec",
+    "started",
+    "Running codex exec --yolo...",
+  );
 
   const schemaEncoded = Buffer.from(REVIEW_SCHEMA).toString("base64");
 
@@ -413,7 +456,7 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
   const prompt = buildPrompt(pr);
   let result: CodexExecutionResult & { stdout: string; stderr: string };
   try {
-    const command = await workspace.sandbox.runCommand({
+    const codexCommandInput = {
       command: "codex",
       args: [
         "exec",
@@ -431,10 +474,28 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
         prompt,
       ],
       policy: allowService(codex()),
-      timeoutMs: CODEX_RUN_TIMEOUT_MS,
+      timeoutMs: CODEX_TIMEOUT_MS,
       detached: true,
+    } as WorkspaceRunCommandDetachedOptions;
+    const command = (await workspace.sandbox.runCommand(codexCommandInput)) as Command;
+    const collectLogs = async (): Promise<void> => {
+      const logs = command.logs?.();
+      if (!logs) {
+        return;
+      }
+      for await (const chunk of logs) {
+        await writeLiveCommandOutputEvent(nextEventIndex(eventIndex), chunk.stream, chunk.chunk);
+      }
+    };
+    const commandWait = command.wait();
+    void collectLogs().catch((error) => {
+      void writeLiveCommandOutputEvent(
+        nextEventIndex(eventIndex),
+        "stderr",
+        `Failed to read live command output stream: ${formatUnknownError(error)}\n`,
+      ).catch(() => {});
     });
-    const commandResult = await command.wait();
+    const commandResult = await commandWait;
     result = {
       exitCode: commandResult.exitCode,
       stdout: commandResult.stdout,
@@ -462,7 +523,7 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
 
   const parsed = { exitCode: result.exitCode } satisfies CodexExecutionResult;
   await writeStepEvent(
-    9,
+    nextEventIndex(eventIndex),
     "run_codex_exec",
     "completed",
     parsed.exitCode === 0
@@ -495,12 +556,15 @@ type RawArtifactSnapshot = {
   stderrTailBase64: string;
 };
 
-async function collectReport(pr: ParsedPullRequest): Promise<ArtifactSnapshot> {
+async function collectReport(
+  pr: ParsedPullRequest,
+  eventIndex: WorkflowEventIndex,
+): Promise<ArtifactSnapshot> {
   "use step";
 
   const workspace = await resolveWorkspace(pr);
   await writeStepEvent(
-    10,
+    nextEventIndex(eventIndex),
     "collect_report",
     "started",
     "Reading report file and verifying log files...",
@@ -540,7 +604,7 @@ async function collectReport(pr: ParsedPullRequest): Promise<ArtifactSnapshot> {
       : "",
   };
   await writeStepEvent(
-    11,
+    nextEventIndex(eventIndex),
     "collect_report",
     "completed",
     snapshot.reportExists
@@ -583,8 +647,9 @@ export async function runPrReviewWorkflow(
 
   const workspace = await createWorkspace(input.pr);
   const repository = await preparePullRequest(input.pr);
-  const codexExecution = await runCodexExec(input.pr);
-  const artifacts = await collectReport(input.pr);
+  const eventIndex: WorkflowEventIndex = { value: 8 };
+  const codexExecution = await runCodexExec(input.pr, eventIndex);
+  const artifacts = await collectReport(input.pr, eventIndex);
 
   const finalOutput: WorkflowPrReviewFinalOutput = {
     kind: "prReview",
@@ -607,7 +672,7 @@ export async function runPrReviewWorkflow(
     report: artifacts.report,
   };
 
-  await writeResultEvent(12, finalOutput);
+  await writeResultEvent(nextEventIndex(eventIndex), finalOutput);
   await closeEventWriter();
   return finalOutput;
 }
