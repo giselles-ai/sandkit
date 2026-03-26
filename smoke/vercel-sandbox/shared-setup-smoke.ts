@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 
 import { allowAll, createSandkit } from "@giselles-ai/sandkit";
 import type {
+  Command,
   CommandResult,
   PersistedSandboxState,
   SandboxDriver,
@@ -157,11 +158,23 @@ class SharedSetupSmokeDriver implements SandboxDriver {
     };
   }
 
-  async runCommand(command: string, args: string[]): Promise<CommandResult> {
+  runCommand(
+    command: string,
+    args: string[],
+    _options?: { detached?: boolean },
+  ): Promise<Command> {
     if (this.#stopped) {
       throw new Error("sandbox stopped");
     }
 
+    const result = this.runCommandResult(command, args);
+
+    return {
+      wait: async () => result,
+    };
+  }
+
+  runCommandResult(command: string, args: string[]): CommandResult {
     switch (command) {
       case "bootstrap": {
         const content = this.#onBootstrap();

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { rm } from "node:fs/promises";
 
-import { allowAll, createSandkit } from "@giselles-ai/sandkit";
+import { allowAll, createSandkit, type Command } from "@giselles-ai/sandkit";
 import { drizzleAdapter } from "@giselles-ai/sandkit/adapters/drizzle";
 import { createMemoryAdapter } from "@giselles-ai/sandkit/adapters/memory";
 import { internalSandboxProvider, mockSandbox } from "@giselles-ai/sandkit/integrations/mock";
@@ -197,7 +197,11 @@ function createFailingDriverFactory(): InternalSandboxDriverFactoryContract {
             expiresAt: new Date(Date.parse(observedAt) + 60_000).toISOString(),
           };
         },
-        async runCommand() {
+        async runCommand(
+          _command: string,
+          _args: string[],
+          _options?: { detached?: boolean },
+        ): Promise<Command> {
           throw new Error("command exploded");
         },
         async snapshot() {

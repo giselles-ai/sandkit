@@ -1,3 +1,5 @@
+import type { Command } from "../../packages/sandkit/src/types.ts";
+
 /**
  * Internal seam helper for smoke tests that intentionally consume package internals.
  * Not part of consumer-facing API tests.
@@ -6,6 +8,8 @@ export { runGenerateCommand } from "../../packages/sandkit/src/cli/generate.ts";
 export { compileVercelNetworkPolicy } from "../../packages/sandkit/src/drivers/vercel-network-policy.ts";
 export { evaluateWorkspacePolicy } from "../../packages/sandkit/src/policies/evaluator.ts";
 
+type RunStatus = "started" | "succeeded" | "failed";
+
 export type InternalRunAdapterContract = {
   createRun(input: {
     workspaceId: string;
@@ -13,14 +17,14 @@ export type InternalRunAdapterContract = {
     executionTargetId: string;
     command: string;
     args?: string[];
-    status?: "started" | "succeeded" | "failed";
+    status?: RunStatus;
     startedAt?: string;
     policySnapshotId?: string;
   }): Promise<unknown>;
   finishRun(
     id: string,
     input: {
-      status: "started" | "succeeded" | "failed";
+      status: RunStatus;
       finishedAt?: string;
       exitCode?: number | null;
       stdout?: string | null;
@@ -69,7 +73,7 @@ export type InternalSandboxDriverFactoryContract = {
       observedAt: string;
       expiresAt: string;
     }>;
-    runCommand: (...args: unknown[]) => Promise<unknown>;
+    runCommand: (command: string, args: string[], options?: { detached?: boolean }) => Promise<Command>;
     snapshot: () => Promise<unknown>;
   }>;
   resumeSandbox: (...args: unknown[]) => Promise<{
@@ -81,7 +85,7 @@ export type InternalSandboxDriverFactoryContract = {
       observedAt: string;
       expiresAt: string;
     }>;
-    runCommand: (...args: unknown[]) => Promise<unknown>;
+    runCommand: (command: string, args: string[], options?: { detached?: boolean }) => Promise<Command>;
     snapshot: () => Promise<unknown>;
   }>;
   isSessionUnavailableError?: (error: unknown) => boolean;
