@@ -22,6 +22,8 @@ export type {
   PolicyServiceCredentialSource,
 } from "./policies/types.ts";
 export { aiGateway } from "./policies/ai-gateway.ts";
+export { allowBun, bun } from "./policies/bun.ts";
 export { codex } from "./policies/codex.ts";
 export { gemini } from "./policies/gemini.ts";
 export { github } from "./policies/github.ts";
+export { allowNpm, npm } from "./policies/npm.ts";

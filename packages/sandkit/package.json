@@ -65,6 +65,11 @@
       "import": "./dist/policies/ai-gateway.js",
       "default": "./dist/policies/ai-gateway.js"
     },
+    "./policies/bun": {
+      "types": "./dist/policies/bun.d.ts",
+      "import": "./dist/policies/bun.js",
+      "default": "./dist/policies/bun.js"
+    },
     "./policies/codex": {
       "types": "./dist/policies/codex.d.ts",
       "import": "./dist/policies/codex.js",
@@ -74,6 +79,11 @@
       "types": "./dist/policies/gemini.d.ts",
       "import": "./dist/policies/gemini.js",
       "default": "./dist/policies/gemini.js"
+    },
+    "./policies/npm": {
+      "types": "./dist/policies/npm.d.ts",
+      "import": "./dist/policies/npm.js",
+      "default": "./dist/policies/npm.js"
     },
     "./schema": {
       "types": "./dist/schema/index.d.ts",
