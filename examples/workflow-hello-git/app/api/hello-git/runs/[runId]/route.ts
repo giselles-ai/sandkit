@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getRunOrNull } from "@/lib/workflow-runs";
-import type { WorkflowHelloGitFinalOutput } from "@/workflows/hello-git";
+import type { WorkflowPrReviewFinalOutput } from "@/workflows/hello-git";
 
 type RouteParams = {
   params: Promise<{
@@ -14,7 +14,7 @@ type RunStatusResponse = {
   status: "pending" | "running" | "completed" | "succeeded" | "failed" | "cancelled" | "unknown";
   startedAt?: string;
   finishedAt?: string;
-  finalOutput?: WorkflowHelloGitFinalOutput;
+  finalOutput?: WorkflowPrReviewFinalOutput;
   error?: {
     code: string;
     message: string;
@@ -74,7 +74,7 @@ export async function GET(
   const mappedStatus = mapRunStatus(status);
   if (mappedStatus === "completed" || mappedStatus === "succeeded") {
     try {
-      response.finalOutput = (await run.returnValue) as WorkflowHelloGitFinalOutput;
+      response.finalOutput = (await run.returnValue) as WorkflowPrReviewFinalOutput;
       response.finishedAt = toIsoDate(completedAt);
     } catch (error) {
       response.status = "failed";

@@ -6,6 +6,7 @@ import type {
   PersistedSandboxState,
   SandboxSessionLease,
   SandboxDriver,
+  SandboxRunCommandOptions,
   WorkspaceSessionLog,
   WorkspaceSessionProcess,
   WorkspaceSessionProcessStartInput,
@@ -63,9 +64,19 @@ class VercelSandboxDriver implements SandboxDriver {
     };
   }
 
-  async runCommand(command: string, args: string[]): Promise<CommandResult> {
-    const result = await this.#sandbox.runCommand(command, args);
-    const finished = await this.#toCommandFinished(result);
+  async runCommand(
+    command: string,
+    args: string[],
+    options?: SandboxRunCommandOptions["provider"],
+  ): Promise<CommandResult> {
+    const rawResult = options?.vercel?.runViaDetachedWait
+      ? await this.#sandbox.runCommand({
+          cmd: command,
+          args,
+          detached: true,
+        })
+      : await this.#sandbox.runCommand(command, args);
+    const finished = await this.#toCommandFinished(rawResult);
 
     return {
       exitCode: finished.exitCode,

@@ -284,7 +284,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
   get sandbox(): LazySandboxHandle {
     if (!this.#lazySandbox) {
       this.#lazySandbox = new LazySandboxHandle(
-        () => this.createOrResumeSandboxForCommand(),
+        (input?: { timeoutMs?: number }) => this.createOrResumeSandboxForCommand(input),
         (input?: { timeoutMs?: number }) => this.openSession(input),
         () => this.attachSession(),
         () => this.getActiveLease(),
@@ -319,7 +319,7 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     return readWorkspaceSandboxLease(this.#record);
   }
 
-  async createOrResumeSandboxForCommand(): Promise<ManagedSandbox> {
+  async createOrResumeSandboxForCommand(input?: { timeoutMs?: number }): Promise<ManagedSandbox> {
     await this.resolveLatestWorkspace();
     if (await this.resolveAttachableSession()) {
       throw new Error(
@@ -328,7 +328,9 @@ export class WorkspaceHandle implements PublicWorkspaceHandle {
     }
 
     const workspace = await this.resolveLatestWorkspace();
-    const sandbox = await this.resolveSandboxDriver(workspace);
+    const sandbox = await this.resolveSandboxDriver(workspace, {
+      timeoutMs: normalizeRunCommandTimeoutMs(input?.timeoutMs),
+    });
 
     return this.createManagedSandbox(sandbox);
   }
@@ -608,6 +610,18 @@ function normalizeSessionTimeoutMs(timeoutMs: number | undefined): number | unde
 
   if (!Number.isInteger(timeoutMs) || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error("openSession timeoutMs must be a positive integer in milliseconds.");
+  }
+
+  return timeoutMs;
+}
+
+function normalizeRunCommandTimeoutMs(timeoutMs: number | undefined): number | undefined {
+  if (timeoutMs === undefined) {
+    return undefined;
+  }
+
+  if (!Number.isInteger(timeoutMs) || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("runCommand timeoutMs must be a positive integer in milliseconds.");
   }
 
   return timeoutMs;

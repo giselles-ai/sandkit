@@ -5,6 +5,7 @@ import type {
   SandboxSessionLease,
   PersistedSandboxState,
   SandboxDriver,
+  SandboxRunCommandOptions,
   WorkspaceSessionLog,
   WorkspaceSessionProcessStartInput,
   SandboxCreateOptions,
@@ -106,7 +107,11 @@ class MockSandboxDriver implements SandboxDriver {
     };
   }
 
-  async runCommand(command: string, args: string[]): Promise<CommandResult> {
+  async runCommand(
+    command: string,
+    args: string[],
+    _options?: SandboxRunCommandOptions["provider"],
+  ): Promise<CommandResult> {
     switch (command) {
       case "echo":
         return this.runEcho(args);

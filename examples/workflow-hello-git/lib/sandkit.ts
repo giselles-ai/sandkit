@@ -1,17 +1,13 @@
-import { createSandkit } from "@giselles-ai/sandkit";
-import type { Sandkit } from "@giselles-ai/sandkit";
+import { allowAll, createSandkit } from "@giselles-ai/sandkit";
 import { vercelSandbox } from "@giselles-ai/sandkit/integrations/vercel";
 
-let sandkitPromise: Promise<Sandkit> | null = null;
-
-export async function getSandkit(): Promise<Sandkit> {
-  if (!sandkitPromise) {
-    sandkitPromise = (async () => {
-      return createSandkit({
-        sandbox: vercelSandbox(),
-      });
-    })();
-  }
-
-  return sandkitPromise;
-}
+export const sandkit = createSandkit({
+  setup: {
+    command: "npm",
+    args: ["install", "-g", "@openai/codex"],
+    policy: allowAll(),
+  },
+  sandbox: vercelSandbox({
+    runtime: "node24",
+  }),
+});

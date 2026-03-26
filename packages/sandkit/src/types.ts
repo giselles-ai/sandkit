@@ -120,6 +120,21 @@ export interface SandboxRunCommandOptions {
   readonly command: string;
   readonly args?: readonly string[];
   readonly policy?: WorkspacePolicy;
+  /**
+   * Ephemeral timeout override for this durable runCommand() invocation.
+   * This affects sandbox create/restore lease timing for the run only and
+   * must not mutate durable workspace defaults.
+   */
+  readonly timeoutMs?: number;
+  readonly provider?: {
+    readonly vercel?: {
+      /**
+       * Opt into detached runCommand() execution followed by wait()
+       * for this invocation only.
+       */
+      readonly runViaDetachedWait?: boolean;
+    };
+  };
 }
 
 export interface PersistedSandboxState {
@@ -139,7 +154,11 @@ export interface SandboxDriver {
    * so callers should not treat mere reads as lease refreshes.
    */
   getSessionLease(): Promise<SandboxSessionLease>;
-  runCommand(command: string, args: string[]): Promise<CommandResult>;
+  runCommand(
+    command: string,
+    args: string[],
+    options?: SandboxRunCommandOptions["provider"],
+  ): Promise<CommandResult>;
   startProcess?(input: WorkspaceSessionProcessStartInput): Promise<WorkspaceSessionProcess>;
   /** Persists and restores durability state through commit() and attach/restore APIs. */
   snapshot(): Promise<PersistedSandboxState>;
