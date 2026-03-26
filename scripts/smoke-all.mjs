@@ -48,10 +48,14 @@ const sharedSetupResult = run(
   { required: true },
 );
 let vercelResult = { ok: true, code: 0 };
+let logsResult = { ok: true, code: 0 };
 let codexExecResult = { ok: true, code: 0 };
 
 if (isVercelAuthConfigured) {
   vercelResult = run("bun run smoke:vercel-sandbox", "Vercel sandbox smoke", { required: false });
+  logsResult = run("bun run --cwd smoke/vercel-sandbox smoke:logs", "Vercel detached logs smoke", {
+    required: false,
+  });
 } else {
   console.log(
     "[smoke:all] skipping Vercel sandbox smoke: set VERCEL_OIDC_TOKEN (local) or VERCEL_ACCESS_TOKEN (CI) to run it.",
@@ -81,6 +85,7 @@ const failed =
   !corruptionResult.ok ||
   !sharedSetupResult.ok ||
   !vercelResult.ok ||
+  !logsResult.ok ||
   !codexExecResult.ok;
 if (failed) {
   process.exitCode = 1;

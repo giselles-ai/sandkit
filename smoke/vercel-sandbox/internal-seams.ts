@@ -73,7 +73,11 @@ export type InternalSandboxDriverFactoryContract = {
       observedAt: string;
       expiresAt: string;
     }>;
-    runCommand: (command: string, args: string[], options?: { detached?: boolean }) => Promise<Command>;
+    runCommand: (
+      command: string,
+      args: string[],
+      options?: { detached?: boolean },
+    ) => Promise<Command>;
     snapshot: () => Promise<unknown>;
   }>;
   resumeSandbox: (...args: unknown[]) => Promise<{
@@ -85,7 +89,11 @@ export type InternalSandboxDriverFactoryContract = {
       observedAt: string;
       expiresAt: string;
     }>;
-    runCommand: (command: string, args: string[], options?: { detached?: boolean }) => Promise<Command>;
+    runCommand: (
+      command: string,
+      args: string[],
+      options?: { detached?: boolean },
+    ) => Promise<Command>;
     snapshot: () => Promise<unknown>;
   }>;
   isSessionUnavailableError?: (error: unknown) => boolean;

@@ -158,11 +158,7 @@ class SharedSetupSmokeDriver implements SandboxDriver {
     };
   }
 
-  runCommand(
-    command: string,
-    args: string[],
-    _options?: { detached?: boolean },
-  ): Promise<Command> {
+  runCommand(command: string, args: string[], _options?: { detached?: boolean }): Promise<Command> {
     if (this.#stopped) {
       throw new Error("sandbox stopped");
     }
