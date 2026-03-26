@@ -1,9 +1,27 @@
 import { allowService, allowServices, codex, github } from "@giselles-ai/sandkit";
-import { FatalError, getWritable } from "workflow";
-import { z } from "zod";
+import { FatalError } from "workflow";
 
 import { sandkit } from "@/lib/sandkit";
-import { createWorkflowPrReviewRunEvent } from "@/lib/workflow-hello-git-events";
+import {
+  collectWorkflowPrReviewArtifacts,
+  type WorkflowPrReviewArtifactSnapshot,
+} from "@/lib/workflow-hello-git-artifacts";
+import {
+  closeEventWriter,
+  writeResultEvent,
+  writeStepEvent,
+} from "@/lib/workflow-hello-git-events";
+import {
+  SCHEMA_PATH,
+  STDERR_PATH,
+  STDOUT_PATH,
+  REPORT_PATH,
+  buildWorkflowPrReviewPrompt,
+  buildWorkflowPrReviewSchemaJson,
+  type WorkflowPrReviewArtifact,
+  type WorkflowPrReviewCheck,
+  type WorkflowPrReviewReport,
+} from "@/lib/workflow-hello-git-report";
 
 type ParsedPullRequest = {
   readonly url: string;
@@ -23,28 +41,7 @@ export type ParsedWorkflowPrReviewInput = {
   readonly requestedAt: string;
 };
 
-const workflowPrReviewArtifactSchema = z.object({
-  path: z.string(),
-  description: z.string(),
-});
-
-const workflowPrReviewCheckSchema = z.object({
-  label: z.string(),
-  command: z.string(),
-  outcome: z.enum(["succeeded", "failed", "not_run"]),
-  note: z.string().nullable(),
-});
-
-const workflowPrReviewReportSchema = z.object({
-  summary: z.string(),
-  checks: z.array(workflowPrReviewCheckSchema),
-  notes: z.array(z.string()).nullable(),
-  files: z.array(workflowPrReviewArtifactSchema).nullable(),
-});
-
-export type WorkflowPrReviewArtifact = z.infer<typeof workflowPrReviewArtifactSchema>;
-export type WorkflowPrReviewCheck = z.infer<typeof workflowPrReviewCheckSchema>;
-export type WorkflowPrReviewReport = z.infer<typeof workflowPrReviewReportSchema>;
+export type { WorkflowPrReviewArtifact, WorkflowPrReviewCheck, WorkflowPrReviewReport };
 
 export type WorkflowPrReviewFinalOutput = {
   readonly kind: "prReview";
@@ -67,15 +64,6 @@ export type WorkflowPrReviewFinalOutput = {
   readonly stderrTail: string;
 };
 
-type ArtifactSnapshot = {
-  readonly report: WorkflowPrReviewReport | null;
-  readonly reportExists: boolean;
-  readonly stdoutExists: boolean;
-  readonly stderrExists: boolean;
-  readonly stdoutTail: string;
-  readonly stderrTail: string;
-};
-
 type PrepareRepositoryResult = {
   readonly clonePerformed: boolean;
   readonly headSha: string;
@@ -84,59 +72,17 @@ type PrepareRepositoryResult = {
 type CodexExecutionResult = {
   readonly exitCode: number;
 };
-const REPORT_PATH = "repo/.codex/pr-verification.report.json";
-const STDOUT_PATH = "repo/.codex/codex.stdout.ndjson";
-const STDERR_PATH = "repo/.codex/codex.stderr.log";
-const SCHEMA_PATH = "repo/.codex/report.schema.json";
 const CODEX_RUN_TIMEOUT_MS = 10 * 60 * 1000;
-
-function toStrictJsonSchema(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => toStrictJsonSchema(item));
-  }
-
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  const record = Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [key, toStrictJsonSchema(child)]),
-  ) as Record<string, unknown>;
-
-  const anyOf = Array.isArray(record.anyOf) ? record.anyOf : null;
-  if (anyOf && anyOf.length === 2) {
-    const typeEntries = anyOf
-      .map((entry) => {
-        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-          const nested = entry as Record<string, unknown>;
-          return typeof nested.type === "string" ? nested.type : null;
-        }
-        return null;
-      })
-      .filter((entry): entry is string => entry !== null);
-
-    if (typeEntries.length === 2 && typeEntries.includes("null")) {
-      const nonNullSchema = anyOf.find((entry) => {
-        return (
-          entry &&
-          typeof entry === "object" &&
-          !Array.isArray(entry) &&
-          (entry as Record<string, unknown>).type !== "null"
-        );
-      });
-
-      if (nonNullSchema && typeof nonNullSchema === "object" && !Array.isArray(nonNullSchema)) {
-        const normalized = {
-          ...(nonNullSchema as Record<string, unknown>),
-          type: typeEntries,
-        };
-        return normalized;
-      }
-    }
-  }
-
-  return record;
-}
+type CodexRunCommandOptions = Parameters<
+  Awaited<ReturnType<typeof sandkit.getWorkspace>>["sandbox"]["runCommand"]
+>[0] & {
+  readonly timeoutMs?: number;
+  readonly provider?: {
+    readonly vercel?: {
+      readonly runViaDetachedWait?: boolean;
+    };
+  };
+};
 
 function formatUnknownError(error: unknown): string {
   if (error instanceof AggregateError) {
@@ -153,69 +99,7 @@ function formatUnknownError(error: unknown): string {
   return String(error);
 }
 
-function createReviewSchemaJson(): string {
-  const jsonSchema = toStrictJsonSchema(z.toJSONSchema(workflowPrReviewReportSchema)) as Record<
-    string,
-    unknown
-  >;
-  delete jsonSchema.$schema;
-  return JSON.stringify(jsonSchema);
-}
-
-const REVIEW_SCHEMA = createReviewSchemaJson();
-
-async function writeStepEvent(
-  index: number,
-  step:
-    | "ensure_workspace"
-    | "clone_repository"
-    | "fetch_pull_request"
-    | "checkout_pull_request"
-    | "run_codex_exec"
-    | "collect_report",
-  status: "started" | "completed",
-  detail?: string,
-): Promise<void> {
-  "use step";
-
-  const writable = getWritable<string>();
-  const writer = writable.getWriter();
-  await writer.write(
-    `${JSON.stringify(
-      createWorkflowPrReviewRunEvent(index, {
-        type: "step",
-        step,
-        status,
-        detail,
-      }),
-    )}\n`,
-  );
-  writer.releaseLock();
-}
-
-async function writeResultEvent(
-  index: number,
-  finalOutput: WorkflowPrReviewFinalOutput,
-): Promise<void> {
-  "use step";
-
-  const writable = getWritable<string>();
-  const writer = writable.getWriter();
-  await writer.write(
-    `${JSON.stringify(
-      createWorkflowPrReviewRunEvent(index, {
-        type: "result",
-        finalOutput,
-      }),
-    )}\n`,
-  );
-  writer.releaseLock();
-}
-
-async function closeEventWriter(): Promise<void> {
-  "use step";
-  await getWritable<string>().close();
-}
+const REVIEW_SCHEMA = buildWorkflowPrReviewSchemaJson();
 
 function parsePullRequestUrl(raw: string): ParsedPullRequest {
   const trimmed = raw.trim();
@@ -299,20 +183,15 @@ async function preparePullRequest(pr: ParsedPullRequest): Promise<PrepareReposit
   const branchName = `codex-pr-${pr.number}`;
 
   await writeStepEvent(2, "clone_repository", "started", "Cloning repository if needed...");
-  const remove = await workspace.sandbox.runCommand("rm", ["-rf", "repo"]);
-  if (remove.exitCode !== 0) {
-    throw new Error(`Failed to remove existing checkout: ${remove.stderr || remove.stdout}`);
-  }
-
-  const clone = await workspace.sandbox.runCommand({
-    command: "git",
-    args: ["clone", repoUrl, "repo"],
-    policy: allowService(github()),
-  });
-  if (clone.exitCode !== 0) {
-    throw new Error(`Failed to clone repository: ${clone.stderr || clone.stdout}`);
-  }
-  await writeStepEvent(3, "clone_repository", "completed", `Cloned ${pr.repoSlug}.`);
+  const clonePerformed = await ensureCheckoutFromExpectedRemote(workspace, repoUrl);
+  await writeStepEvent(
+    3,
+    "clone_repository",
+    "completed",
+    clonePerformed
+      ? `Cloned ${pr.repoSlug} and prepared repository checkout.`
+      : `Reusing existing checkout for ${pr.repoSlug}.`,
+  );
 
   await writeStepEvent(
     4,
@@ -360,32 +239,73 @@ async function preparePullRequest(pr: ParsedPullRequest): Promise<PrepareReposit
     "completed",
     `Checked out ${branchName} at ${headSha.slice(0, 12)}.`,
   );
-  return { clonePerformed: true, headSha };
+  return { clonePerformed, headSha };
 }
 
-function buildPrompt(pr: ParsedPullRequest): string {
-  return [
-    `You are verifying GitHub pull request ${pr.url} inside an isolated sandbox.`,
-    "",
-    "Goal:",
-    "- Find and run reasonable CI-like commands for this repository.",
-    "- Install dependencies when needed.",
-    "- Attempt formatter, linter, type-check, and test checks where they exist.",
-    "- You are running with codex exec --yolo, so the outer sandbox is the real execution boundary.",
-    "- Return a strict JSON object matching this schema:",
-    "  - summary: string",
-    "  - checks: array of objects with label, command, outcome, and note (use null when there is no note)",
-    "  - notes: array of caveats, or null when there are none",
-    "  - files: array of interesting file paths with description, or null when there are none",
-    "",
-    "Rules:",
-    "- Do not ask for confirmation and do not request more input from the user.",
-    "- Each check must include the actual shell command you decided to run or attempted to run.",
-    "- If a command cannot be run, record a failed or not_run check with a short note.",
-    "- Do work directly in this checkout and keep a brief, truthful summary.",
-    "",
-    "The repository checkout is the current working tree.",
-  ].join("\n");
+async function ensureCheckoutFromExpectedRemote(
+  workspace: Awaited<ReturnType<typeof sandkit.getWorkspace>>,
+  repoUrl: string,
+): Promise<boolean> {
+  const isRepo = await workspace.sandbox.runCommand("git", [
+    "-C",
+    "repo",
+    "rev-parse",
+    "--is-inside-work-tree",
+  ]);
+  if (isRepo.exitCode !== 0) {
+    await removeCheckoutIfPresent(workspace);
+    await cloneRepository(workspace, repoUrl);
+    return true;
+  }
+
+  const remote = await workspace.sandbox.runCommand("git", [
+    "-C",
+    "repo",
+    "config",
+    "--get",
+    "remote.origin.url",
+  ]);
+  if (remote.exitCode !== 0 || remote.stdout.trim() !== repoUrl) {
+    await removeCheckoutIfPresent(workspace);
+    await cloneRepository(workspace, repoUrl);
+    return true;
+  }
+
+  return false;
+}
+
+async function removeCheckoutIfPresent(
+  workspace: Awaited<ReturnType<typeof sandkit.getWorkspace>>,
+): Promise<void> {
+  const pathState = await workspace.sandbox.runCommand("bash", ["-lc", "[ -e repo ]"]);
+  if (pathState.exitCode !== 0 && pathState.exitCode !== 1) {
+    throw new Error(
+      `Failed to inspect existing checkout path: ${pathState.stderr || pathState.stdout}`,
+    );
+  }
+
+  if (pathState.exitCode === 1) {
+    return;
+  }
+
+  const remove = await workspace.sandbox.runCommand("rm", ["-rf", "repo"]);
+  if (remove.exitCode !== 0) {
+    throw new Error(`Failed to remove unexpected checkout: ${remove.stderr || remove.stdout}`);
+  }
+}
+
+async function cloneRepository(
+  workspace: Awaited<ReturnType<typeof sandkit.getWorkspace>>,
+  repoUrl: string,
+): Promise<void> {
+  const clone = await workspace.sandbox.runCommand({
+    command: "git",
+    args: ["clone", repoUrl, "repo"],
+    policy: allowService(github()),
+  });
+  if (clone.exitCode !== 0) {
+    throw new Error(`Failed to clone repository: ${clone.stderr || clone.stdout}`);
+  }
 }
 
 async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult> {
@@ -410,7 +330,7 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
     );
   }
 
-  const prompt = buildPrompt(pr);
+  const prompt = buildWorkflowPrReviewPrompt(pr);
   let result: CodexExecutionResult & { stdout: string; stderr: string };
   try {
     const commandResult = await workspace.sandbox.runCommand({
@@ -437,7 +357,7 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
           runViaDetachedWait: true,
         },
       },
-    });
+    } as CodexRunCommandOptions);
     result = {
       exitCode: commandResult.exitCode,
       stdout: commandResult.stdout,
@@ -477,28 +397,7 @@ async function runCodexExec(pr: ParsedPullRequest): Promise<CodexExecutionResult
 
 runCodexExec.maxRetries = 0;
 
-function parseReport(raw: string): WorkflowPrReviewReport | null {
-  if (!raw.trim()) {
-    return null;
-  }
-
-  try {
-    return workflowPrReviewReportSchema.parse(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-type RawArtifactSnapshot = {
-  reportBase64: string;
-  reportExists: boolean;
-  stdoutExists: boolean;
-  stderrExists: boolean;
-  stdoutTailBase64: string;
-  stderrTailBase64: string;
-};
-
-async function collectReport(pr: ParsedPullRequest): Promise<ArtifactSnapshot> {
+async function collectReport(pr: ParsedPullRequest): Promise<WorkflowPrReviewArtifactSnapshot> {
   "use step";
 
   const workspace = await resolveWorkspace(pr);
@@ -508,40 +407,7 @@ async function collectReport(pr: ParsedPullRequest): Promise<ArtifactSnapshot> {
     "started",
     "Reading report file and verifying log files...",
   );
-  const result = await workspace.sandbox.runCommand("bash", [
-    "-lc",
-    [
-      "set -euo pipefail",
-      `report_exists=false; [ -f '${REPORT_PATH}' ] && report_exists=true`,
-      `stdout_exists=false; [ -f '${STDOUT_PATH}' ] && stdout_exists=true`,
-      `stderr_exists=false; [ -f '${STDERR_PATH}' ] && stderr_exists=true`,
-      `report_base64=$(cat '${REPORT_PATH}' 2>/dev/null | base64 | tr -d '\\n')`,
-      `stdout_tail_base64=$(tail -n 40 '${STDOUT_PATH}' 2>/dev/null | base64 | tr -d '\\n')`,
-      `stderr_tail_base64=$(tail -n 40 '${STDERR_PATH}' 2>/dev/null | base64 | tr -d '\\n')`,
-      'printf \'{"reportBase64":"%s","reportExists":%s,"stdoutExists":%s,"stderrExists":%s,"stdoutTailBase64":"%s","stderrTailBase64":"%s"}\n\' "$report_base64" "$report_exists" "$stdout_exists" "$stderr_exists" "$stdout_tail_base64" "$stderr_tail_base64"',
-    ].join("\n"),
-  ]);
-
-  if (result.exitCode !== 0) {
-    throw new Error(`Failed to read workflow artifacts: ${result.stderr || result.stdout}`);
-  }
-
-  const rawSnapshot = JSON.parse(result.stdout.trim()) as RawArtifactSnapshot;
-  const reportRaw = rawSnapshot.reportBase64
-    ? Buffer.from(rawSnapshot.reportBase64, "base64").toString("utf8")
-    : "";
-  const snapshot = {
-    report: parseReport(reportRaw),
-    reportExists: rawSnapshot.reportExists,
-    stdoutExists: rawSnapshot.stdoutExists,
-    stderrExists: rawSnapshot.stderrExists,
-    stdoutTail: rawSnapshot.stdoutTailBase64
-      ? Buffer.from(rawSnapshot.stdoutTailBase64, "base64").toString("utf8")
-      : "",
-    stderrTail: rawSnapshot.stderrTailBase64
-      ? Buffer.from(rawSnapshot.stderrTailBase64, "base64").toString("utf8")
-      : "",
-  };
+  const snapshot = await collectWorkflowPrReviewArtifacts(workspace);
   await writeStepEvent(
     11,
     "collect_report",

@@ -1,3 +1,5 @@
+import { getWritable } from "workflow";
+
 import type { WorkflowPrReviewFinalOutput } from "@/workflows/hello-git";
 
 export type WorkflowPrReviewStep =
@@ -93,4 +95,51 @@ export function deriveWorkflowPrReviewDisplayState(
   }
 
   return {};
+}
+
+export async function writeStepEvent(
+  index: number,
+  step: WorkflowPrReviewStep,
+  status: "started" | "completed",
+  detail?: string,
+): Promise<void> {
+  "use step";
+
+  const writable = getWritable<string>();
+  const writer = writable.getWriter();
+  await writer.write(
+    `${JSON.stringify(
+      createWorkflowPrReviewRunEvent(index, {
+        type: "step",
+        step,
+        status,
+        detail,
+      }),
+    )}\n`,
+  );
+  writer.releaseLock();
+}
+
+export async function writeResultEvent(
+  index: number,
+  finalOutput: WorkflowPrReviewFinalOutput,
+): Promise<void> {
+  "use step";
+
+  const writable = getWritable<string>();
+  const writer = writable.getWriter();
+  await writer.write(
+    `${JSON.stringify(
+      createWorkflowPrReviewRunEvent(index, {
+        type: "result",
+        finalOutput,
+      }),
+    )}\n`,
+  );
+  writer.releaseLock();
+}
+
+export async function closeEventWriter(): Promise<void> {
+  "use step";
+  await getWritable<string>().close();
 }
