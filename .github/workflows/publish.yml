@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Create access token for GitHub App
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3
         with:
           app-id: ${{ secrets.GISELLE_SANDKIT_APP_ID }}
           private-key: ${{ secrets.GISELLE_SANDKIT_PRIVATE_KEY }}
@@ -36,7 +36,7 @@ jobs:
 
       - name: Load release PR metadata
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           WORKFLOW_DISPATCH_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
         with:
@@ -109,7 +109,7 @@ jobs:
             core.setOutput("pr_url", pr.html_url);
 
       - name: Check out merge commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ steps.pr.outputs.merge_sha }}
           fetch-depth: 0
@@ -117,17 +117,17 @@ jobs:
           persist-credentials: false
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Resolve package directory
         id: package
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           RELEASE_TITLE: ${{ steps.pr.outputs.release_title }}
           EXPECTED_RELEASE_IDENTITY: ${{ steps.pr.outputs.expected_release_identity }}
@@ -225,7 +225,7 @@ jobs:
 
       - name: Check release tag target commit
         id: tag
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
           EXPECTED_MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
@@ -284,7 +284,7 @@ jobs:
 
       - name: Check GitHub Release state
         id: release
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
         with:
@@ -308,7 +308,7 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.release.outputs.exists != 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           TAG_NAME: ${{ steps.package.outputs.release_tag_name }}
           RELEASE_TITLE: ${{ steps.pr.outputs.release_title }}
